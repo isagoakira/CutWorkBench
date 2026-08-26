@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cut-workbench"
+version = "0.1.0"
+description = "Agent-neutral, protocol-first local video editing workbench"
+requires-python = ">=3.11"
+license = {text = "Apache-2.0"}
+
+[project.scripts]
+cut-workbench = "cut_workbench.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
