@@ -24,7 +24,22 @@ class VectCutCompiler:
 
         controls_by_segment: dict[str, list[Mapping[str, Any]]] = {}
         for control in project["controls"].values():
+            if control.get("enabled", True) and control.get("kind") not in {"mask", "mask_blur", "effect"}:
+                raise ValidationError(
+                    f"VectCut compiler cannot preserve control kind {control.get('kind')!r} "
+                    f"({control.get('control_id')}); add a target mapping or record an approved downgrade"
+                )
             controls_by_segment.setdefault(control["target_segment_id"], []).append(control)
+
+        unsupported_segments = [
+            segment["segment_id"] for segment in project["segments"].values()
+            if project["tracks"][segment["track_id"]]["kind"] not in {"video", "audio"}
+        ]
+        if unsupported_segments:
+            raise ValidationError(
+                "VectCut compiler cannot preserve non-video/audio source segments: "
+                + ", ".join(sorted(unsupported_segments))
+            )
 
         segments = sorted(
             project["segments"].values(),
@@ -164,7 +179,7 @@ class VectCutHttpTransport:
             raise ValidationError(f"VectCut HTTP call returned a non-object for {tool}")
         if value.get("success") is False:
             raise ValidationError(f"VectCut rejected {tool}: {value.get('error') or value.get('message')}")
-        result = value.get("result", value)
+        result = value.get("output", value.get("result", value))
         if not isinstance(result, Mapping):
             raise ValidationError(f"VectCut result is not an object for {tool}")
         return result

@@ -1,14 +1,43 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from cut_workbench.project_store import ProjectStore
-from cut_workbench.vectcut import VectCutCompiler, VectCutExecutor
+from cut_workbench.vectcut import VectCutCompiler, VectCutExecutor, VectCutHttpTransport
+from cut_workbench.errors import ValidationError
 
 
 class VectCutCompilerTests(unittest.TestCase):
+    def test_http_transport_unwraps_vectcut_output_envelope(self) -> None:
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return json.dumps({"success": True, "output": {"draft_id": "dfd-real"}}).encode()
+
+        with patch("cut_workbench.vectcut.request.urlopen", return_value=Response()):
+            result = VectCutHttpTransport().call("create_draft", {"width": 1, "height": 1})
+        self.assertEqual({"draft_id": "dfd-real"}, result)
+    def test_compiler_rejects_controls_it_cannot_preserve_instead_of_silently_dropping_them(self) -> None:
+        project = {
+            "project_id": "unsupported", "revision": 1,
+            "canvas": {"width": 1, "height": 1}, "sources": {}, "tracks": {}, "segments": {},
+            "captions": {}, "controls": {
+                "CTL": {"control_id": "CTL", "kind": "unknown-plugin-control", "enabled": True,
+                         "target_segment_id": "SEG", "track_id": "V1", "properties": {}}
+            },
+        }
+        with self.assertRaisesRegex(ValidationError, "cannot preserve"):
+            VectCutCompiler().compile(project)
+
     def test_compiler_keeps_base_treatment_caption_and_effects_as_separate_named_tracks(self) -> None:
         with TemporaryDirectory() as directory:
             store = ProjectStore(Path(directory))

@@ -12,6 +12,7 @@ from cut_workbench.capabilities import (
     RoutingPolicy,
 )
 from cut_workbench.jobs import CapabilityJobStore
+from cut_workbench.errors import ValidationError
 
 
 class FakeLocalProvider:
@@ -30,6 +31,33 @@ class FakeLocalProvider:
 
 
 class CapabilityOrchestratorTests(unittest.TestCase):
+    def test_failed_local_provider_is_persisted_as_failed_not_left_running(self) -> None:
+        class BrokenProvider:
+            provider_id = "local:broken"
+
+            def supports(self, capability):
+                return capability == "audio.detect.silence"
+
+            def execute(self, request):
+                raise RuntimeError("decoder crashed")
+
+        with TemporaryDirectory() as directory:
+            jobs = CapabilityJobStore(Path(directory))
+            orchestrator = CapabilityOrchestrator(
+                registry=ProviderRegistry([BrokenProvider()]), jobs=jobs, policy=RoutingPolicy.default()
+            )
+            with self.assertRaisesRegex(RuntimeError, "decoder crashed"):
+                orchestrator.request(CapabilityRequest(capability="audio.detect.silence", inputs={}))
+            failed = jobs.failed()
+            self.assertEqual(1, len(failed))
+            self.assertEqual("failed", failed[0]["status"])
+
+    def test_job_ids_cannot_escape_the_job_store(self) -> None:
+        with TemporaryDirectory() as directory:
+            jobs = CapabilityJobStore(Path(directory))
+            with self.assertRaisesRegex(ValidationError, "job_id"):
+                jobs.read("../secret")
+
     def test_light_analysis_runs_locally_but_high_precision_visual_work_is_left_for_agent(self) -> None:
         with TemporaryDirectory() as directory:
             jobs = CapabilityJobStore(Path(directory))

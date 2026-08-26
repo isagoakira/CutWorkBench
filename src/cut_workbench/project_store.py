@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
+import math
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,8 +31,7 @@ class ProjectStore:
         canvas: Mapping[str, Any],
         editor_adapter: str = "unassigned",
     ) -> Project:
-        if not project_id or any(part in project_id for part in ("/", "\\", "..")):
-            raise ValidationError("project_id must be a non-empty path-safe identifier")
+        _validate_path_id(project_id, "project_id")
         project_dir = self._project_dir(project_id)
         if project_dir.exists():
             raise ValidationError(f"project already exists: {project_id}")
@@ -76,6 +77,7 @@ class ProjectStore:
         actor: str,
         reason: str,
         operations: Iterable[Operation],
+        evidence: Iterable[str] = (),
     ) -> Project:
         current = self.read_project(project_id)
         if current["revision"] != expected_revision:
@@ -92,7 +94,9 @@ class ProjectStore:
         updated["parent_revision"] = current["revision"]
         updated["revision"] = current["revision"] + 1
         self._validate_project(updated)
-        self._commit(updated, actor=actor, reason=reason, operations=planned)
+        self._commit(
+            updated, actor=actor, reason=reason, operations=planned, evidence=list(evidence)
+        )
         return copy.deepcopy(updated)
 
     def branch_project(
@@ -113,6 +117,7 @@ class ProjectStore:
             status="assembly",
             branched_from={"project_id": source_project_id, "revision": source["revision"]},
         )
+        branched["verification"] = []
         if self._project_dir(new_project_id).exists():
             raise ValidationError(f"project already exists: {new_project_id}")
         self._validate_project(branched)
@@ -165,19 +170,27 @@ class ProjectStore:
             raise ValidationError(f"unknown source: {source_id}")
         if track_id not in project["tracks"]:
             raise ValidationError(f"unknown track: {track_id}")
+        if project["tracks"][track_id]["kind"] not in {"video", "audio", "sticker"}:
+            raise ValidationError("source segments may only target video, audio, or sticker tracks")
         source_in = _number(operation, "source_in")
         source_out = _number(operation, "source_out")
         if source_in < 0 or source_out <= source_in:
             raise ValidationError("segment source range must be positive and non-empty")
+        timeline_start = _number(operation, "timeline_start")
+        speed = float(operation.get("speed", 1.0))
+        if timeline_start < 0:
+            raise ValidationError("segment timeline_start must be non-negative")
+        if speed <= 0:
+            raise ValidationError("segment speed must be positive")
         project["segments"][segment_id] = {
             "segment_id": segment_id,
             "source_id": source_id,
             "track_id": track_id,
             "source_in": source_in,
             "source_out": source_out,
-            "timeline_start": _number(operation, "timeline_start"),
+            "timeline_start": timeline_start,
             "transform": dict(operation.get("transform", {})),
-            "speed": float(operation.get("speed", 1.0)),
+            "speed": speed,
             "role": operation.get("role", "source-derived"),
         }
 
@@ -272,13 +285,16 @@ class ProjectStore:
         source_id = operation.get("source_id")
         if source_id is not None and source_id not in project["sources"]:
             raise ValidationError(f"unknown decision source: {source_id}")
+        data = dict(operation.get("data", {}))
+        if kind == "source_audit":
+            _validate_source_audit(project, source_id, evidence, data)
         project["decisions"][decision_id] = {
             "decision_id": decision_id,
             "kind": kind,
             "summary": summary,
             "source_id": source_id,
             "evidence": list(evidence),
-            "data": dict(operation.get("data", {})),
+            "data": data,
         }
 
     @staticmethod
@@ -300,7 +316,7 @@ class ProjectStore:
     @staticmethod
     def _op_record_verification(project: Project, operation: Operation) -> None:
         verification_id = _required_id(operation, "verification_id")
-        if any(item["verification_id"] == verification_id for item in project["verification"]):
+        if _stable_id_exists(project, verification_id):
             raise ValidationError(f"stable id already exists: {verification_id}")
         kind = operation.get("kind")
         if kind not in {"structural", "visual", "semantic", "render"}:
@@ -315,6 +331,7 @@ class ProjectStore:
             "passed": bool(operation.get("passed", False)),
             "evidence": list(evidence),
             "notes": operation.get("notes", ""),
+            "content_fingerprint": content_fingerprint(project),
         })
 
     @staticmethod
@@ -325,7 +342,9 @@ class ProjectStore:
         if status in {"delivered", "handed_off"}:
             from .verification import verify_project
 
-            report = verify_project(project)
+            candidate = dict(project)
+            candidate["status"] = status
+            report = verify_project(candidate)
             if not report["passed"]:
                 codes = ", ".join(issue["code"] for issue in report["issues"])
                 raise ValidationError(f"protocol gate failed before {status}: {codes}")
@@ -345,6 +364,7 @@ class ProjectStore:
         actor: str,
         reason: str,
         operations: list[dict[str, Any]],
+        evidence: list[str] | None = None,
     ) -> None:
         project_dir = self._project_dir(project["project_id"])
         revisions_dir = project_dir / "revisions"
@@ -353,7 +373,6 @@ class ProjectStore:
         if revision_path.exists():
             raise RevisionConflict(f"revision already exists: {revision_path.name}")
         _atomic_write(revision_path, json.dumps(project, indent=2, ensure_ascii=False) + "\n")
-        _atomic_write(project_dir / "CURRENT", f"{project['revision']}\n")
         event = {
             "revision": project["revision"],
             "parent_revision": project.get("parent_revision"),
@@ -361,11 +380,16 @@ class ProjectStore:
             "actor": actor,
             "reason": reason,
             "operations": operations,
+            "evidence": evidence or [],
         }
         with (project_dir / "journal.jsonl").open("a", encoding="utf-8", newline="\n") as journal:
             journal.write(json.dumps(event, ensure_ascii=False) + "\n")
+            journal.flush()
+            os.fsync(journal.fileno())
+        _atomic_write(project_dir / "CURRENT", f"{project['revision']}\n")
 
     def _project_dir(self, project_id: str) -> Path:
+        _validate_path_id(project_id, "project_id")
         return self.projects_dir / project_id
 
     def _revision_path(self, project_id: str, revision: int) -> Path:
@@ -379,13 +403,68 @@ def _required_id(operation: Operation, key: str) -> str:
     return value
 
 
+def _validate_path_id(value: str, name: str) -> None:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value in {".", ".."}
+        or any(part in value for part in ("/", "\\", ".."))
+        or any(ord(character) < 32 for character in value)
+    ):
+        raise ValidationError(f"{name} must be a non-empty path-safe identifier")
+
+
 def _ensure_unique(project: Project, stable_id: str) -> None:
     collections = (
         "sources", "tracks", "segments", "controls", "captions", "decisions",
         "capability_downgrades",
     )
-    if any(stable_id in project[name] for name in collections):
+    if any(stable_id in project[name] for name in collections) or any(
+        item.get("verification_id") == stable_id for item in project.get("verification", [])
+    ):
         raise ValidationError(f"stable id already exists: {stable_id}")
+
+
+def _stable_id_exists(project: Project, stable_id: str) -> bool:
+    collections = (
+        "sources", "tracks", "segments", "controls", "captions", "decisions",
+        "capability_downgrades",
+    )
+    return any(stable_id in project[name] for name in collections) or any(
+        item.get("verification_id") == stable_id for item in project.get("verification", [])
+    )
+
+
+def _validate_source_audit(
+    project: Project, source_id: Any, evidence: list[Any], data: Mapping[str, Any]
+) -> None:
+    if source_id is None:
+        raise ValidationError("source_audit requires source_id")
+    duration = project["sources"][source_id].get("media_profile", {}).get("duration")
+    if not isinstance(duration, (int, float)) or duration <= 0:
+        raise ValidationError("source_audit requires source media_profile.duration")
+    sample_fps = data.get("sample_fps")
+    sample_count = data.get("sample_count")
+    coverage = data.get("coverage_range")
+    if not isinstance(sample_fps, (int, float)) or sample_fps < 2:
+        raise ValidationError("source_audit sample_fps must be at least 2")
+    if not isinstance(sample_count, int) or sample_count < math.ceil(duration * sample_fps):
+        raise ValidationError("source_audit sample_count does not cover the declared duration")
+    if not isinstance(coverage, Mapping) or coverage.get("start") != 0 or coverage.get("end") != duration:
+        raise ValidationError("source_audit coverage_range must span the full source")
+    if not isinstance(data.get("escalations"), list):
+        raise ValidationError("source_audit escalations must be a list")
+    if not evidence or not all(isinstance(item, str) and item for item in evidence):
+        raise ValidationError("source_audit requires evidence locators")
+
+
+def content_fingerprint(project: Mapping[str, Any]) -> str:
+    content = {
+        key: project.get(key)
+        for key in ("canvas", "editor_adapter", "sources", "tracks", "segments", "controls", "captions")
+    }
+    encoded = json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _number(operation: Operation, key: str) -> float:

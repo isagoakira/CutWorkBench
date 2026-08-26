@@ -24,7 +24,10 @@ class ProtocolClosureTests(unittest.TestCase):
                 actor="agent:codex",
                 reason="audit and assemble",
                 operations=[
-                    {"op": "register_source", "source_id": "SRC-001", "locator": "original.mp4"},
+                    {
+                        "op": "register_source", "source_id": "SRC-001", "locator": "original.mp4",
+                        "sha256": "a" * 64, "media_profile": {"duration": 5},
+                    },
                     {"op": "add_track", "track_id": "V1-BASE", "kind": "video", "purpose": "base"},
                     {
                         "op": "add_segment", "segment_id": "SEG-001", "source_id": "SRC-001",
@@ -34,7 +37,10 @@ class ProtocolClosureTests(unittest.TestCase):
                         "op": "record_decision", "decision_id": "DEC-AUDIT-SRC001", "kind": "source_audit",
                         "summary": "2 fps full-source pass; no escalation required", "source_id": "SRC-001",
                         "evidence": ["audit/SRC-001/contact-sheet-2fps.jpg"],
-                        "data": {"sample_fps": 2, "coverage": "full", "escalations": []},
+                        "data": {
+                            "sample_fps": 2, "sample_count": 10,
+                            "coverage_range": {"start": 0, "end": 5}, "escalations": [],
+                        },
                     },
                     {
                         "op": "record_downgrade", "exception_id": "EXC-001", "capability": "face-tracking-mask",
@@ -74,6 +80,29 @@ class ProtocolClosureTests(unittest.TestCase):
             self.assertFalse(report["passed"])
             self.assertTrue(any(issue["code"] == "source-audit-missing" for issue in report["issues"]))
             self.assertTrue(any(issue["code"] == "visual-verification-missing" for issue in report["issues"]))
+
+    def test_visual_evidence_becomes_stale_after_content_mutation(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = ProjectStore(Path(directory))
+            project = store.create_project(
+                project_id="stale", title="Stale", canvas={"width": 1, "height": 1, "fps": 1}
+            )
+            project = store.apply_plan(
+                project_id="stale", expected_revision=1, actor="human", reason="visual check",
+                operations=[{
+                    "op": "record_verification", "verification_id": "VER-VIS-001", "kind": "visual",
+                    "verifier": "human", "passed": True, "evidence": ["preview://rev1"],
+                }],
+            )
+            project = store.apply_plan(
+                project_id="stale", expected_revision=2, actor="agent", reason="change content",
+                operations=[{"op": "add_track", "track_id": "V1-BASE", "kind": "video", "purpose": "base"}],
+            )
+            with self.assertRaisesRegex(Exception, "visual-verification-missing"):
+                store.apply_plan(
+                    project_id="stale", expected_revision=project["revision"], actor="agent", reason="deliver",
+                    operations=[{"op": "set_status", "status": "handed_off"}],
+                )
 
 
 if __name__ == "__main__":

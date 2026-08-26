@@ -103,7 +103,11 @@ class CapabilityOrchestrator:
         if provider is None:
             raise ValidationError(f"no local provider for capability: {request.capability}")
         job = self.jobs.create(request=request_data, provider_id=provider.provider_id, status="running")
-        result = provider.execute(request)
+        try:
+            result = provider.execute(request)
+        except Exception as error:
+            self.jobs.fail(job_id=job["job_id"], provider_id=provider.provider_id, message=str(error))
+            raise
         if result.capability != request.capability:
             raise ValidationError("provider returned a result for the wrong capability")
         return self.jobs.complete(

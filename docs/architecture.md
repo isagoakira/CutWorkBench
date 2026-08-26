@@ -34,9 +34,9 @@ An edit is an atomic list of operations applied against `expected_revision`. Eac
 
 ## Cut Protocol closure
 
-- Source audit: one `source_audit` decision per source, full coverage, sample rate >=2 fps, evidence path, and escalation data.
+- Source audit: one `source_audit` decision per source with probed duration, valid SHA-256, full `coverage_range`, sample rate >=2 fps, sufficient `sample_count`, evidence locators, and an explicit escalation list.
 - Build: immutable source ranges plus named tracks and separable controls.
-- Verify: deterministic checks run locally; semantic/frame review uses capability jobs; visual review is recorded with evidence.
+- Verify: deterministic checks run locally; unexplained base-track gaps/overlaps fail; semantic/frame review uses capability jobs; visual review is bound to a content fingerprint so later edits make it stale.
 - Optimize: every iteration is a new revision with reason, actor, operations, and evidence.
 - Handoff: `delivered` and `handed_off` are gated; handed-off revisions reject mutations and require a branch.
 

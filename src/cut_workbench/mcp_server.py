@@ -32,9 +32,10 @@ class McpServer:
             elif method == "tools/call":
                 params = message.get("params", {})
                 value = self.app.call_tool(params["name"], params.get("arguments", {}))
+                structured = value if isinstance(value, Mapping) else {"value": value}
                 result = {
                     "content": [{"type": "text", "text": json.dumps(value, ensure_ascii=False)}],
-                    "structuredContent": value,
+                    "structuredContent": structured,
                     "isError": False,
                 }
             else:

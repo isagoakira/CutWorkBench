@@ -10,6 +10,40 @@ from cut_workbench.errors import ValidationError
 
 
 class ProjectStoreTests(unittest.TestCase):
+    def test_project_ids_are_path_safe_on_every_entry_point(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = ProjectStore(Path(directory))
+            with self.assertRaisesRegex(ValidationError, "path-safe"):
+                store.read_project("../outside")
+            project = store.create_project(
+                project_id="safe", title="Safe", canvas={"width": 1, "height": 1, "fps": 1}
+            )
+            with self.assertRaisesRegex(ValidationError, "path-safe"):
+                store.branch_project(source_project_id=project["project_id"], new_project_id="../outside")
+
+    def test_segment_timing_rejects_negative_timeline_and_nonpositive_speed(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = ProjectStore(Path(directory))
+            project = store.create_project(
+                project_id="timing", title="Timing", canvas={"width": 1, "height": 1, "fps": 1}
+            )
+            project = store.apply_plan(
+                project_id="timing", expected_revision=1, actor="test", reason="setup",
+                operations=[
+                    {"op": "register_source", "source_id": "SRC", "locator": "source.mp4"},
+                    {"op": "add_track", "track_id": "V1", "kind": "video"},
+                ],
+            )
+            for values in ({"timeline_start": -1, "speed": 1}, {"timeline_start": 0, "speed": 0}):
+                with self.assertRaises(ValidationError):
+                    store.apply_plan(
+                        project_id="timing", expected_revision=project["revision"], actor="test", reason="bad",
+                        operations=[{
+                            "op": "add_segment", "segment_id": f"SEG-{values['speed']}", "source_id": "SRC",
+                            "track_id": "V1", "source_in": 0, "source_out": 1, **values,
+                        }],
+                    )
+
     def test_plan_application_creates_immutable_revision_and_preserves_source_provenance(self) -> None:
         with TemporaryDirectory() as directory:
             store = ProjectStore(Path(directory))
@@ -171,6 +205,18 @@ class ProjectStoreTests(unittest.TestCase):
             branch = store.branch_project(source_project_id="handoff", new_project_id="handoff-v2")
             self.assertEqual("assembly", branch["status"])
             self.assertEqual({"project_id": "handoff", "revision": 2}, branch["branched_from"])
+
+    def test_direct_handoff_cannot_bypass_visual_gate(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = ProjectStore(Path(directory))
+            store.create_project(
+                project_id="no-visual", title="No visual", canvas={"width": 1, "height": 1, "fps": 1}
+            )
+            with self.assertRaisesRegex(ValidationError, "visual-verification-missing"):
+                store.apply_plan(
+                    project_id="no-visual", expected_revision=1, actor="test", reason="bypass",
+                    operations=[{"op": "set_status", "status": "handed_off"}],
+                )
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +31,7 @@ class CapabilityJobStore:
         return job
 
     def read(self, job_id: str) -> dict[str, Any]:
+        _validate_job_id(job_id)
         path = self.jobs_dir / f"{job_id}.json"
         if not path.exists():
             raise ProjectNotFound(f"capability job not found: {job_id}")
@@ -56,10 +58,25 @@ class CapabilityJobStore:
         return job
 
     def pending(self) -> list[dict[str, Any]]:
+        return self._by_status("pending_agent")
+
+    def failed(self) -> list[dict[str, Any]]:
+        return self._by_status("failed")
+
+    def _by_status(self, status: str) -> list[dict[str, Any]]:
         if not self.jobs_dir.exists():
             return []
         jobs = [json.loads(path.read_text(encoding="utf-8")) for path in self.jobs_dir.glob("*.json")]
-        return sorted((job for job in jobs if job["status"] == "pending_agent"), key=lambda item: item["created_at"])
+        return sorted((job for job in jobs if job["status"] == status), key=lambda item: item["created_at"])
+
+    def fail(self, *, job_id: str, provider_id: str, message: str) -> dict[str, Any]:
+        job = self.read(job_id)
+        job.update(
+            status="failed", provider_id=provider_id,
+            result={"error": message}, completed_at=_now(),
+        )
+        self._write(job)
+        return job
 
     def _write(self, job: dict[str, Any]) -> None:
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
@@ -71,3 +88,8 @@ class CapabilityJobStore:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _validate_job_id(job_id: str) -> None:
+    if not isinstance(job_id, str) or re.fullmatch(r"[0-9a-f]{32}", job_id) is None:
+        raise ValidationError("job_id must be a 32-character hexadecimal identifier")

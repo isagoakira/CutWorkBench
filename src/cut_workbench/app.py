@@ -40,6 +40,7 @@ class WorkbenchApp:
             _tool("project.apply_plan", "Atomically apply stable-ID edit operations", {
                 "project_id": string, "expected_revision": integer, "actor": string, "reason": string,
                 "operations": {"type": "array", "items": obj},
+                "evidence": {"type": "array", "items": string},
             }, ["project_id", "expected_revision", "actor", "reason", "operations"]),
             _tool("project.branch", "Branch a frozen or handed-off project", {
                 "source_project_id": string, "new_project_id": string, "revision": integer, "title": string,
