@@ -7,6 +7,7 @@ The first adapter targets the locally installed Jianying Pro 11.3 line. It reads
 - `sync.open` and `sync.preview` are read-only.
 - `sync.commit` writes only a new Workbench revision.
 - `sync.publish` refuses a running Jianying process, refuses an existing destination, clones the complete source draft, and writes only the clone.
+- A published clone receives a new Jianying library UUID. When the local draft index is discoverable, registration is atomic and the previous index is retained as a uniquely named backup.
 - The codec executable is not bundled. Its SHA-256 is mandatory; the adapter stages the pinned helper in a temporary directory and points it at the selected installed `videoeditor.dll`.
 - Unknown Jianying objects are retained as opaque external entities. A full VectCut rebuild is rejected while such objects exist because it cannot prove lossless preservation.
 

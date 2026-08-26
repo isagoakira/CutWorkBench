@@ -213,6 +213,44 @@ class JianyingAdapterTests(unittest.TestCase):
 
         self.assertEqual("restored", restored["tracks"][0]["segments"][0]["id"])
 
+    def test_publish_registers_a_unique_clone_and_rewrites_its_metadata(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "Original"
+            destination = root / "Acceptance"
+            source.mkdir()
+            (source / "draft_content.json").write_text('{"id":"timeline-1","tracks":[]}', encoding="utf-8")
+            original_meta = {
+                "draft_id": "draft-original", "draft_name": "Original",
+                "draft_fold_path": str(source), "draft_root_path": str(root),
+                "draft_cover": str(source / "draft_cover.jpg"),
+                "tm_draft_create": 1, "tm_draft_modified": 2,
+            }
+            (source / "draft_meta_info.json").write_text(json.dumps(original_meta), encoding="utf-8")
+            index_path = root / "root_meta_info.json"
+            index_path.write_text(json.dumps({
+                "all_draft_store": [{
+                    **original_meta, "draft_json_file": str(source / "draft_content.json")
+                }],
+                "draft_ids": 1, "root_path": str(root),
+            }), encoding="utf-8")
+            adapter = JianyingDraftAdapter(
+                codec=PlainJsonCodec(), editor_version="fixture", process_checker=lambda: False,
+                draft_index_path=index_path,
+            )
+            receipt = adapter.publish(source, destination, [])
+            source_meta = json.loads((source / "draft_meta_info.json").read_text(encoding="utf-8"))
+            clone_meta = json.loads((destination / "draft_meta_info.json").read_text(encoding="utf-8"))
+            index = json.loads(index_path.read_text(encoding="utf-8"))
+
+        self.assertEqual("draft-original", source_meta["draft_id"])
+        self.assertNotEqual("draft-original", clone_meta["draft_id"])
+        self.assertEqual("Acceptance", clone_meta["draft_name"])
+        self.assertEqual(2, index["draft_ids"])
+        self.assertEqual(clone_meta["draft_id"], index["all_draft_store"][-1]["draft_id"])
+        self.assertTrue(receipt["registered"])
+        self.assertTrue(receipt["index_backup_path"])
+
 
 class EditorSyncTests(unittest.TestCase):
     def _project(self, root: Path):

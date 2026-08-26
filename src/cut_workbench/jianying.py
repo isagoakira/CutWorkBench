@@ -7,6 +7,8 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
+import uuid
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
@@ -103,10 +105,12 @@ class JianyingDraftAdapter:
         codec: DraftCodec,
         editor_version: str,
         process_checker: Callable[[], bool] | None = None,
+        draft_index_path: Path | None = None,
     ) -> None:
         self.codec = codec
         self.editor_version = editor_version
         self.process_checker = process_checker or _jianying_is_running
+        self.draft_index_path = Path(draft_index_path).resolve() if draft_index_path else None
 
     def profile(self) -> dict[str, Any]:
         return {
@@ -141,6 +145,9 @@ class JianyingDraftAdapter:
         if source == destination or source in destination.parents:
             raise ValidationError("publish destination must not be inside the source draft")
         shutil.copytree(source, destination)
+        registered = False
+        index_backup_path: Path | None = None
+        clone_draft_id: str | None = None
         try:
             content_path = destination / "draft_content.json"
             native = self.codec.decode(content_path)
@@ -158,6 +165,20 @@ class JianyingDraftAdapter:
                 temporary.write_bytes(encoded_bytes)
                 os.replace(temporary, mirror)
             encoded.unlink(missing_ok=True)
+            metadata = _rewrite_clone_metadata(
+                codec=self.codec, destination=destination, editor_version=self.editor_version
+            )
+            clone_draft_id = metadata.get("draft_id") if metadata else None
+            if self.draft_index_path and metadata:
+                if self.process_checker():
+                    raise ValidationError("Jianying started before draft registration; clone was discarded")
+                index_backup_path = _register_clone(
+                    index_path=self.draft_index_path,
+                    source_draft_id=metadata["source_draft_id"],
+                    clone_meta=metadata,
+                    destination=destination,
+                )
+                registered = True
         except Exception:
             shutil.rmtree(destination)
             raise
@@ -169,6 +190,9 @@ class JianyingDraftAdapter:
             "content_sha256": _file_hash(destination / "draft_content.json"),
             "mirrors_written": [str(path) for path in mirrors],
             "editor_version": self.editor_version,
+            "draft_id": clone_draft_id,
+            "registered": registered,
+            "index_backup_path": str(index_backup_path) if index_backup_path else None,
         }
 
 
@@ -308,6 +332,89 @@ def _content_mirrors(draft: Path, timeline_id: Any) -> list[Path]:
                 timeline / "template-2.tmp",
             ] if path.is_file())
     return paths
+
+
+def _rewrite_clone_metadata(
+    *, codec: DraftCodec, destination: Path, editor_version: str,
+) -> dict[str, Any]:
+    meta_path = destination / "draft_meta_info.json"
+    if not meta_path.is_file():
+        return {}
+    meta = codec.decode(meta_path)
+    source_draft_id = meta.get("draft_id")
+    if not isinstance(source_draft_id, str) or not source_draft_id:
+        raise ValidationError("Jianying draft metadata has no draft_id")
+    clone_draft_id = str(uuid.uuid4()).upper()
+    now = int(time.time() * 1_000_000)
+    meta.update({
+        "draft_id": clone_draft_id,
+        "draft_name": destination.name,
+        "draft_fold_path": _jianying_path(destination),
+        "draft_root_path": str(destination.parent),
+        "tm_draft_create": now,
+        "tm_draft_modified": now,
+    })
+    if "draft_cover" in meta:
+        meta["draft_cover"] = _jianying_path(destination / "draft_cover.jpg")
+    temporary = destination / ".cut-workbench-meta.tmp"
+    codec.encode(meta, temporary)
+    os.replace(temporary, meta_path)
+    return {
+        **meta,
+        "source_draft_id": source_draft_id,
+        "editor_version": editor_version,
+    }
+
+
+def _register_clone(
+    *, index_path: Path, source_draft_id: str, clone_meta: Mapping[str, Any], destination: Path,
+) -> Path:
+    if not index_path.is_file():
+        raise ValidationError(f"Jianying draft index not found: {index_path}")
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    stores = index.get("all_draft_store")
+    if not isinstance(stores, list):
+        raise ValidationError("Jianying draft index has no all_draft_store list")
+    source_entry = next((item for item in stores if item.get("draft_id") == source_draft_id), None)
+    if not isinstance(source_entry, Mapping):
+        raise ValidationError(f"source draft is not registered in Jianying index: {source_draft_id}")
+    clone_entry = copy.deepcopy(dict(source_entry))
+    clone_entry.update({
+        key: copy.deepcopy(value)
+        for key, value in clone_meta.items()
+        if key in clone_entry and key not in {"source_draft_id", "editor_version"}
+    })
+    clone_entry.update({
+        "draft_id": clone_meta["draft_id"],
+        "draft_name": clone_meta["draft_name"],
+        "draft_fold_path": _jianying_path(destination),
+        "draft_json_file": _jianying_path(destination / "draft_content.json"),
+        "draft_root_path": str(destination.parent),
+        "draft_cover": _jianying_path(destination / "draft_cover.jpg"),
+    })
+    stores.append(clone_entry)
+    index["draft_ids"] = len(stores)
+    backup = index_path.with_name(f"{index_path.name}.cut-workbench-{uuid.uuid4().hex}.bak")
+    shutil.copy2(index_path, backup)
+    temporary = index_path.with_name(f"{index_path.name}.cut-workbench.tmp")
+    temporary.write_text(json.dumps(index, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    os.replace(temporary, index_path)
+    return backup
+
+
+def discover_jianying_draft_index() -> Path | None:
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if not local_app_data:
+        return None
+    candidate = (
+        Path(local_app_data) / "JianyingPro" / "User Data" / "Projects"
+        / "com.lveditor.draft" / "root_meta_info.json"
+    )
+    return candidate if candidate.is_file() else None
+
+
+def _jianying_path(path: Path) -> str:
+    return str(Path(path).resolve()).replace("\\", "/")
 
 
 def _jianying_is_running() -> bool:

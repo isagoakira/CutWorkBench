@@ -9,7 +9,7 @@ from .app import WorkbenchApp
 from .config import load_runtime_config
 from .mcp_server import McpServer
 from .editor_sync import EditorSync, SyncSessionStore
-from .jianying import JianyingCodecCommand, JianyingDraftAdapter
+from .jianying import JianyingCodecCommand, JianyingDraftAdapter, discover_jianying_draft_index
 from .project_store import ProjectStore
 
 
@@ -40,7 +40,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.jianying_codec, args.jianying_install,
             expected_sha256=args.jianying_codec_sha256,
         )
-        adapter = JianyingDraftAdapter(codec=codec, editor_version=args.jianying_version)
+        adapter = JianyingDraftAdapter(
+            codec=codec, editor_version=args.jianying_version,
+            draft_index_path=discover_jianying_draft_index(),
+        )
         editor_sync = EditorSync(
             store=ProjectStore(args.root), sessions=SyncSessionStore(args.root), adapter=adapter
         )
