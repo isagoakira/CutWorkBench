@@ -9,11 +9,11 @@ Codex / Claude / future Agent
              v
         WorkbenchApp
       /       |        \
-ProjectStore  Capability  Target compiler
-(revisions)   router      (VectCut first)
-                  |              |
-        local JSON process   HTTP/MCP/in-process
-        or pending Agent job editor adapter
+ProjectStore  Capability  Editor adapters
+(revisions)   router      /            \
+                  |    VectCut compiler  Jianying sync
+        local JSON process   HTTP         snapshot/clone
+        or pending Agent job
 ```
 
 ## Stable seams
@@ -31,6 +31,12 @@ An edit is an atomic list of operations applied against `expected_revision`. Eac
 ### Target seam
 
 `VectCutCompiler` translates one frozen revision to an auditable call plan. It does not perform network I/O. `VectCutExecutor` resolves plan references and delegates calls to a transport; `VectCutHttpTransport` targets the local VectCutAPI service. Other editors implement their own compiler/transport without changing project state.
+
+### Bidirectional editor seam
+
+`EditorAdapter` exposes only `profile`, `snapshot`, and `publish`. `EditorSync` owns the platform-neutral transaction: `sync.open` pins project revision A and editor snapshot A; `sync.preview` compares current project B and current editor C; `sync.commit` records accepted manual changes as revision D; `sync.publish` applies accepted Agent-side fields to a new editor-draft clone.
+
+Bindings map editor-native IDs to stable Workbench IDs. Unbound native objects are stored as opaque `external_entities`; unsupported objects block full VectCut compilation instead of disappearing. Conflicts are deterministic and require an explicit `human` or `agent` resolution. This keeps Jianying-specific encryption and JSON paths outside the domain model, so another Agent host or editor adapter does not change the four public sync tools.
 
 ## Cut Protocol closure
 

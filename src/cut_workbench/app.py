@@ -10,12 +10,20 @@ from .manifest import render_cut_manifest
 from .project_store import ProjectStore
 from .vectcut import VectCutCompiler
 from .verification import verify_project
+from .editor_sync import EditorSync
 
 
 class WorkbenchApp:
     """Portable use-case facade shared by CLI, MCP, Codex and future agent hosts."""
 
-    def __init__(self, root: Path, *, registry: ProviderRegistry | None = None, policy: RoutingPolicy | None = None) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        registry: ProviderRegistry | None = None,
+        policy: RoutingPolicy | None = None,
+        editor_sync: EditorSync | None = None,
+    ) -> None:
         self.root = Path(root)
         self.projects = ProjectStore(self.root)
         self.jobs = CapabilityJobStore(self.root)
@@ -25,6 +33,7 @@ class WorkbenchApp:
             policy=policy or RoutingPolicy.default(),
         )
         self.vectcut = VectCutCompiler()
+        self.editor_sync = editor_sync
 
     def list_tools(self) -> list[dict[str, Any]]:
         string = {"type": "string"}
@@ -63,6 +72,20 @@ class WorkbenchApp:
             _tool("vectcut.compile", "Compile a project revision to a separable VectCut call plan", {
                 "project_id": string, "revision": integer, "draft_folder": string,
             }, ["project_id"]),
+            _tool("sync.open", "Open a version-pinned external editing session", {
+                "project_id": string, "draft_path": string, "revision": integer,
+                "bindings": {"type": "object", "additionalProperties": string},
+            }, ["project_id", "draft_path"]),
+            _tool("sync.preview", "Preview Agent/manual three-way changes and conflicts", {
+                "session_id": string,
+            }, ["session_id"]),
+            _tool("sync.commit", "Commit manual changes as a new project revision", {
+                "session_id": string,
+                "resolutions": {"type": "object", "additionalProperties": {"enum": ["human", "agent"]}},
+            }, ["session_id", "resolutions"]),
+            _tool("sync.publish", "Publish merged Agent changes to a new editor draft clone", {
+                "session_id": string, "destination_path": string,
+            }, ["session_id", "destination_path"]),
         ]
 
     def call_tool(self, name: str, arguments: Mapping[str, Any]) -> Any:
@@ -77,6 +100,14 @@ class WorkbenchApp:
             "capability.pending": lambda a: self.jobs.pending(),
             "capability.submit": lambda a: self.capabilities.submit_agent_result(**dict(a)),
             "vectcut.compile": self._compile_vectcut,
+            "sync.open": lambda a: self._sync().open(**dict(a)),
+            "sync.preview": lambda a: self._sync().preview(a["session_id"]),
+            "sync.commit": lambda a: self._sync().commit(
+                a["session_id"], resolutions=a.get("resolutions", {})
+            ),
+            "sync.publish": lambda a: self._sync().publish(
+                a["session_id"], destination_path=a["destination_path"]
+            ),
         }
         if name not in handlers:
             raise KeyError(f"unknown tool: {name}")
@@ -95,6 +126,13 @@ class WorkbenchApp:
     def _compile_vectcut(self, arguments: Mapping[str, Any]) -> Any:
         project = self.projects.read_project(arguments["project_id"], arguments.get("revision"))
         return self.vectcut.compile(project, draft_folder=arguments.get("draft_folder"))
+
+    def _sync(self) -> EditorSync:
+        if self.editor_sync is None:
+            raise RuntimeError(
+                "Jianying sync is not configured; start with --jianying-codec and --jianying-install"
+            )
+        return self.editor_sync
 
 
 def _tool(

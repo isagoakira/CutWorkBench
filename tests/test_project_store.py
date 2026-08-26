@@ -10,6 +10,25 @@ from cut_workbench.errors import ValidationError
 
 
 class ProjectStoreTests(unittest.TestCase):
+    def test_pre_sync_schema_is_upgraded_on_read_and_next_revision(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store = ProjectStore(root)
+            store.create_project(
+                project_id="legacy", title="Legacy", canvas={"width": 1, "height": 1, "fps": 1}
+            )
+            revision_path = root / "projects" / "legacy" / "revisions" / "rev-000001.json"
+            legacy = json.loads(revision_path.read_text(encoding="utf-8"))
+            del legacy["external_entities"]
+            revision_path.write_text(json.dumps(legacy), encoding="utf-8")
+
+            loaded = store.read_project("legacy")
+            self.assertEqual({}, loaded["external_entities"])
+            updated = store.apply_plan(
+                project_id="legacy", expected_revision=1, actor="test", reason="migrate", operations=[]
+            )
+            self.assertEqual({}, updated["external_entities"])
+
     def test_project_ids_are_path_safe_on_every_entry_point(self) -> None:
         with TemporaryDirectory() as directory:
             store = ProjectStore(Path(directory))

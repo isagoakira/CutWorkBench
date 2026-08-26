@@ -52,6 +52,7 @@ class ProjectStore:
             "decisions": {},
             "capability_downgrades": {},
             "verification": [],
+            "external_entities": {},
         }
         self._validate_project(project)
         self._commit(project, actor="system", reason="create project", operations=[])
@@ -67,7 +68,12 @@ class ProjectStore:
         revision_path = self._revision_path(project_id, revision)
         if not revision_path.exists():
             raise ProjectNotFound(f"project revision not found: {project_id}@{revision}")
-        return json.loads(revision_path.read_text(encoding="utf-8"))
+        project = json.loads(revision_path.read_text(encoding="utf-8"))
+        # Schema v1 projects created before editor round-trip support do not
+        # contain this collection. Upgrade the in-memory view; the next normal
+        # revision commit persists it without rewriting immutable history.
+        project.setdefault("external_entities", {})
+        return project
 
     def apply_plan(
         self,
@@ -193,6 +199,65 @@ class ProjectStore:
             "speed": speed,
             "role": operation.get("role", "source-derived"),
         }
+
+    @staticmethod
+    def _op_update_segment(project: Project, operation: Operation) -> None:
+        segment_id = _required_id(operation, "segment_id")
+        if segment_id not in project["segments"]:
+            raise ValidationError(f"unknown segment: {segment_id}")
+        changes = operation.get("changes")
+        if not isinstance(changes, Mapping) or not changes:
+            raise ValidationError("update_segment changes must be a non-empty object")
+        allowed = {"source_in", "source_out", "timeline_start", "speed", "transform"}
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValidationError(f"unsupported segment changes: {sorted(unknown)}")
+        segment = project["segments"][segment_id]
+        for key, value in changes.items():
+            segment[key] = copy.deepcopy(value)
+        if segment["source_in"] < 0 or segment["source_out"] <= segment["source_in"]:
+            raise ValidationError("segment source range must be positive and non-empty")
+        if segment["timeline_start"] < 0 or segment["speed"] <= 0:
+            raise ValidationError("segment timeline/speed must remain valid")
+        if not isinstance(segment.get("transform"), Mapping):
+            raise ValidationError("segment transform must be an object")
+
+    @staticmethod
+    def _op_import_external_entity(project: Project, operation: Operation) -> None:
+        stable_id = _required_id(operation, "external_entity_id")
+        _ensure_unique(project, stable_id)
+        external_id = operation.get("external_id")
+        adapter_id = operation.get("adapter_id")
+        if not isinstance(external_id, str) or not external_id or not isinstance(adapter_id, str) or not adapter_id:
+            raise ValidationError("external entity requires adapter_id and external_id")
+        project.setdefault("external_entities", {})[stable_id] = {
+            "external_entity_id": stable_id,
+            "adapter_id": adapter_id,
+            "external_id": external_id,
+            "kind": operation.get("kind", "unknown"),
+            "properties": copy.deepcopy(dict(operation.get("properties", {}))),
+            "native": copy.deepcopy(dict(operation.get("native", {}))),
+            "external_fingerprint": operation.get("external_fingerprint"),
+        }
+
+    @staticmethod
+    def _op_remove_entity(project: Project, operation: Operation) -> None:
+        stable_id = _required_id(operation, "stable_id")
+        if stable_id in project["segments"]:
+            if any(control["target_segment_id"] == stable_id for control in project["controls"].values()):
+                raise ValidationError("cannot remove a segment with attached controls")
+            del project["segments"][stable_id]
+            return
+        if stable_id in project["captions"]:
+            del project["captions"][stable_id]
+            return
+        if stable_id in project["controls"]:
+            del project["controls"][stable_id]
+            return
+        if stable_id in project.get("external_entities", {}):
+            del project["external_entities"][stable_id]
+            return
+        raise ValidationError(f"unknown removable entity: {stable_id}")
 
     @staticmethod
     def _op_add_control(project: Project, operation: Operation) -> None:
@@ -418,8 +483,9 @@ def _ensure_unique(project: Project, stable_id: str) -> None:
     collections = (
         "sources", "tracks", "segments", "controls", "captions", "decisions",
         "capability_downgrades",
+        "external_entities",
     )
-    if any(stable_id in project[name] for name in collections) or any(
+    if any(stable_id in project.get(name, {}) for name in collections) or any(
         item.get("verification_id") == stable_id for item in project.get("verification", [])
     ):
         raise ValidationError(f"stable id already exists: {stable_id}")
@@ -429,8 +495,9 @@ def _stable_id_exists(project: Project, stable_id: str) -> bool:
     collections = (
         "sources", "tracks", "segments", "controls", "captions", "decisions",
         "capability_downgrades",
+        "external_entities",
     )
-    return any(stable_id in project[name] for name in collections) or any(
+    return any(stable_id in project.get(name, {}) for name in collections) or any(
         item.get("verification_id") == stable_id for item in project.get("verification", [])
     )
 
@@ -461,7 +528,10 @@ def _validate_source_audit(
 def content_fingerprint(project: Mapping[str, Any]) -> str:
     content = {
         key: project.get(key)
-        for key in ("canvas", "editor_adapter", "sources", "tracks", "segments", "controls", "captions")
+        for key in (
+            "canvas", "editor_adapter", "sources", "tracks", "segments", "controls", "captions",
+            "external_entities",
+        )
     }
     encoded = json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()

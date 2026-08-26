@@ -6,9 +6,33 @@ from tempfile import TemporaryDirectory
 
 from cut_workbench.app import WorkbenchApp
 from cut_workbench.mcp_server import McpServer
+from cut_workbench.editor_sync import EditorSync, SyncSessionStore
+from cut_workbench.project_store import ProjectStore
 
 
 class McpSurfaceTests(unittest.TestCase):
+    def test_sync_tools_are_exposed_through_the_same_agent_neutral_surface(self) -> None:
+        class Adapter:
+            adapter_id = "fake"
+
+            def profile(self):
+                return {"adapter_id": "fake", "writable": True}
+
+            def snapshot(self, path):
+                return {
+                    "fingerprint": "fp", "draft_id": "d", "tracks": {}, "materials": {},
+                    "entities": {}, "native_summary": {}, "adapter_id": "fake", "schema_version": 1,
+                }
+
+            def publish(self, draft_path, destination_path, patches):
+                return {"status": "published"}
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            sync = EditorSync(store=ProjectStore(root), sessions=SyncSessionStore(root), adapter=Adapter())
+            app = WorkbenchApp(root, editor_sync=sync)
+            names = {tool["name"] for tool in app.list_tools()}
+            self.assertTrue({"sync.open", "sync.preview", "sync.commit", "sync.publish"} <= names)
     def test_agent_neutral_tool_surface_creates_and_mutates_projects(self) -> None:
         with TemporaryDirectory() as directory:
             app = WorkbenchApp(Path(directory))

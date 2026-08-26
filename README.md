@@ -45,9 +45,10 @@ Agent 的 MCP 配置指向同一个命令：
 4. `project.verify` 检查 2fps 全源审计、轨道结构和交付前视觉证据。
 5. `vectcut.compile` 生成可审计的 VectCut 调用计划；底轨、处理副本、字幕和效果保持分离。
 6. 本地 VectCutAPI 运行在默认 `http://127.0.0.1:9001` 时，用 `VectCutExecutor(VectCutHttpTransport())` 执行计划并保存剪映/CapCut 草稿。
-7. `project.manifest` 输出与当前 revision 同源的 Cut Manifest；`handed_off` 后只能分支再改。
+7. 对剪映已有草稿使用 `sync.open → sync.preview → sync.commit → sync.publish`：手工编辑进入新 revision，Agent 编辑只增量写入一个新克隆，原草稿永不覆盖。
+8. `project.manifest` 输出与当前 revision 同源的 Cut Manifest；`handed_off` 后只能分支再改。
 
-本地能力配置见 [examples/runtime-config.json](examples/runtime-config.json)，操作例子见 [examples/edit-plan.json](examples/edit-plan.json)，设计与闭环映射见 [docs/architecture.md](docs/architecture.md)。
+本地能力配置见 [examples/runtime-config.json](examples/runtime-config.json)，操作例子见 [examples/edit-plan.json](examples/edit-plan.json)，剪映双向同步配置与安全边界见 [docs/jianying-sync.md](docs/jianying-sync.md)，设计与闭环映射见 [docs/architecture.md](docs/architecture.md)。
 
 ## 测试
 

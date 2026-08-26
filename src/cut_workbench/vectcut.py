@@ -11,6 +11,10 @@ class VectCutCompiler:
     """Compiles a frozen workbench revision into an auditable VectCut call plan."""
 
     def compile(self, project: Mapping[str, Any], *, draft_folder: str | None = None) -> dict[str, Any]:
+        if project.get("external_entities"):
+            raise ValidationError(
+                "full VectCut compilation cannot preserve imported external entities; use sync.publish for incremental round-trip"
+            )
         logical_draft_id = f"{project['project_id']}-r{project['revision']:06d}"
         canvas = project["canvas"]
         draft_ref = {"$ref": "create_draft.result.draft_id"}

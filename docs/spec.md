@@ -14,6 +14,9 @@ Build a zero-subscription, local-first video editing workbench where an external
 6. Compile a frozen revision to a VectCut call plan that creates named tracks and preserves treatment isolation, then execute it through a replaceable transport. A target compiler must reject unsupported entities or controls explicitly; it may never omit them silently.
 7. Enforce the Cut Protocol loop: full-source audit at no less than 2 fps with evidence, explicit decisions and escalations, deterministic structural verification, visual evidence before delivery/handoff, versioned manifest, approved downgrade declarations, and immutable handoff with branching.
 8. Depend only on Python's standard library at runtime. FFmpeg/ffprobe and local model sidecars are optional external processes.
+9. Support a three-way editor round trip: pinned baseline, current Workbench revision, and current manual editor draft. Manual edits become a new immutable revision; collisions require an explicit side choice.
+10. Preserve editor-native unknown entities and fields as opaque data. Incremental publishing must patch a newly cloned draft, never overwrite the source draft, and must refuse to write while Jianying is running.
+11. Keep the editor API Agent-neutral through `sync.open`, `sync.preview`, `sync.commit`, and `sync.publish`; editor encryption/serialization belongs in replaceable adapters.
 
 ## Non-goals for v0.1
 
@@ -21,3 +24,4 @@ Build a zero-subscription, local-first video editing workbench where an external
 - Bundling model weights or requiring a local LLM.
 - Hiding proprietary editor formats behind an irreversible render.
 - Automatically claiming subjective quality without Agent or human evidence.
+- Treating captions, effects, compound clips, or other unsupported Jianying entities as typed editable records. They remain opaque until a typed importer/writer is implemented.
