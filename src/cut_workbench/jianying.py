@@ -38,15 +38,17 @@ class PlainJsonCodec:
 class JianyingCodecCommand:
     """Version-local sidecar around jy-draftc and Jianying's installed videoeditor.dll."""
 
-    def __init__(self, executable: Path, install_dir: Path, *, expected_sha256: str | None = None) -> None:
+    def __init__(self, executable: Path, install_dir: Path, *, expected_sha256: str) -> None:
         self.executable = Path(executable).resolve()
         self.install_dir = Path(install_dir).resolve()
         if not self.executable.is_file():
             raise ValidationError(f"Jianying codec helper not found: {self.executable}")
         if not (self.install_dir / "videoeditor.dll").is_file():
             raise ValidationError(f"videoeditor.dll not found under: {self.install_dir}")
+        if len(expected_sha256) != 64 or any(character not in "0123456789abcdefABCDEF" for character in expected_sha256):
+            raise ValidationError("Jianying codec helper requires a valid SHA-256 pin")
         actual = _file_hash(self.executable)
-        if expected_sha256 and actual.lower() != expected_sha256.lower():
+        if actual.lower() != expected_sha256.lower():
             raise ValidationError("Jianying codec helper hash does not match the configured pin")
         self.helper_sha256 = actual
         self.dll_sha256 = _file_hash(self.install_dir / "videoeditor.dll")
@@ -79,6 +81,8 @@ class JianyingCodecCommand:
             host = Path(host_dir)
             helper = host / self.executable.name
             shutil.copy2(self.executable, helper)
+            if _file_hash(helper) != self.helper_sha256:
+                raise ValidationError("staged Jianying codec helper no longer matches its SHA-256 pin")
             (host / ".env").write_text(f"JY_INSTALL_DIR={self.install_dir}\n", encoding="utf-8")
             completed = subprocess.run(
                 [str(helper), mode, str(source.resolve()), str(output.resolve())],
@@ -145,6 +149,8 @@ class JianyingDraftAdapter:
             encoded = destination / ".cut-workbench-content.tmp"
             self.codec.encode(native, encoded)
             encoded_bytes = encoded.read_bytes()
+            if self.process_checker():
+                raise ValidationError("Jianying started during publish; draft clone was discarded")
             mirrors = _content_mirrors(destination, native.get("id"))
             for mirror in mirrors:
                 mirror.parent.mkdir(parents=True, exist_ok=True)
@@ -192,6 +198,8 @@ def _normalize_draft(native: Mapping[str, Any], *, adapter_id: str) -> dict[str,
         track_kind = str(track.get("type") or "unknown")
         tracks[track_id] = {
             "external_id": track_id, "kind": track_kind, "order": track_index,
+            "segment_collection_path": f"/tracks/{track_index}/segments",
+            "segment_count": len(track.get("segments", [])) if isinstance(track.get("segments", []), list) else 0,
             "native": copy.deepcopy(dict(track)),
         }
         for segment_index, segment in enumerate(track.get("segments", [])):
@@ -226,6 +234,7 @@ def _normalize_draft(native: Mapping[str, Any], *, adapter_id: str) -> dict[str,
                     "speed": f"{prefix}/speed",
                     "transform": f"{prefix}/clip/transform",
                 },
+                "entity_path": prefix,
                 "native": copy.deepcopy(dict(segment)),
             }
     encoded = json.dumps(native, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -278,6 +287,10 @@ def _apply_json_patch(root: Any, patch: Mapping[str, Any]) -> None:
             parent.pop(int(final))
         else:
             parent.pop(final, None)
+    elif operation == "insert":
+        if not isinstance(parent, list):
+            raise ValidationError("insert patch requires a list parent")
+        parent.insert(int(final), copy.deepcopy(patch.get("value")))
     else:
         raise ValidationError(f"unsupported JSON patch operation: {operation}")
 
@@ -298,10 +311,16 @@ def _content_mirrors(draft: Path, timeline_id: Any) -> list[Path]:
 
 
 def _jianying_is_running() -> bool:
-    completed = subprocess.run(
-        ["tasklist", "/FI", "IMAGENAME eq JianyingPro.exe", "/FO", "CSV", "/NH"],
-        text=True, capture_output=True, check=False,
-    )
+    try:
+        completed = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq JianyingPro.exe", "/FO", "CSV", "/NH"],
+            text=True, capture_output=True, check=False,
+        )
+    except OSError as error:
+        raise ValidationError(f"cannot verify Jianying process state: {error}") from error
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()
+        raise ValidationError(f"cannot verify Jianying process state: {detail or completed.returncode}")
     return "JianyingPro.exe" in completed.stdout
 
 

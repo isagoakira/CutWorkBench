@@ -83,6 +83,8 @@ class EditorSync:
 
     def preview(self, session_id: str) -> dict[str, Any]:
         session = self.sessions.read(session_id)
+        if session.get("status") not in {"open", "previewed"}:
+            raise ValidationError("sync.preview cannot reopen a committed or published session")
         base_project = self.store.read_project(session["project_id"], session["base_project_revision"])
         current_project = self.store.read_project(session["project_id"])
         current_external = dict(self.adapter.snapshot(session["draft_path"]))
@@ -96,6 +98,7 @@ class EditorSync:
         plan.update(
             session_id=session_id,
             project_id=session["project_id"],
+            bindings=copy.deepcopy(session["bindings"]),
             base_project_revision=session["base_project_revision"],
             current_project_revision=current_project["revision"],
             base_external_fingerprint=session["base_external"]["fingerprint"],
@@ -108,12 +111,21 @@ class EditorSync:
 
     def commit(self, session_id: str, *, resolutions: Mapping[str, str]) -> dict[str, Any]:
         session = self.sessions.read(session_id)
+        if session.get("status") != "previewed":
+            raise ValidationError("sync.commit requires a fresh previewed session")
         plan = session.get("latest_plan")
         if not plan:
             raise ValidationError("sync.preview must run before sync.commit")
-        resolved = _validate_resolutions(plan["conflicts"], resolutions)
-        operations = _human_operations(plan, resolved, adapter_id=self.adapter.adapter_id)
         current = self.store.read_project(session["project_id"])
+        if current["revision"] != plan["current_project_revision"]:
+            raise ValidationError("project changed after sync.preview; run sync.preview again")
+        current_external = dict(self.adapter.snapshot(session["draft_path"]))
+        if current_external["fingerprint"] != plan["current_external_fingerprint"]:
+            raise ValidationError("Jianying draft changed after sync.preview; run sync.preview again")
+        resolved = _validate_resolutions(plan["conflicts"], resolutions)
+        operations = _human_operations(
+            plan, resolved, adapter_id=self.adapter.adapter_id, current_project=current
+        )
         if operations:
             current = self.store.apply_plan(
                 project_id=session["project_id"],
@@ -141,11 +153,19 @@ class EditorSync:
 
     def publish(self, session_id: str, *, destination_path: str) -> dict[str, Any]:
         session = self.sessions.read(session_id)
+        if session.get("status") != "committed":
+            raise ValidationError("sync.publish requires sync.commit and cannot be repeated")
         plan = session.get("latest_plan")
         if not plan:
             raise ValidationError("sync.preview must run before sync.publish")
         conflicts = plan["conflicts"]
         resolved = _validate_resolutions(conflicts, session.get("resolutions", {})) if conflicts else {}
+        current = self.store.read_project(session["project_id"])
+        if current["revision"] != session.get("committed_project_revision"):
+            raise ValidationError("project changed after sync.commit; open a new sync session")
+        current_external = dict(self.adapter.snapshot(session["draft_path"]))
+        if current_external["fingerprint"] != plan["current_external_fingerprint"]:
+            raise ValidationError("Jianying draft changed after sync.commit; open a new sync session")
         patches = _agent_patches(plan, resolved)
         receipt = dict(self.adapter.publish(session["draft_path"], destination_path, patches))
         session["status"] = "published"
@@ -192,6 +212,18 @@ def _validate_bindings(
             raise ValidationError(f"binding references unknown external entity: {external_id}")
         if stable_id not in stable_ids:
             raise ValidationError(f"binding references unknown stable entity: {stable_id}")
+        entity = external["entities"][external_id]
+        if entity.get("kind") != "segment":
+            raise ValidationError(f"binding requires an A/V segment: {external_id}")
+        project_segment = project["segments"][stable_id]
+        project_track = project.get("tracks", {}).get(project_segment.get("track_id"), {})
+        external_track = external.get("tracks", {}).get(entity.get("track_external_id"), {})
+        if project_track.get("kind") not in {"video", "audio"} or project_track.get("kind") != external_track.get("kind"):
+            raise ValidationError(f"binding track kind mismatch: {external_id} -> {stable_id}")
+        material = external.get("materials", {}).get(entity.get("material_external_id"), {})
+        source = project.get("sources", {}).get(project_segment.get("source_id"), {})
+        if material.get("path") and source.get("locator") and _path_key(material["path"]) != _path_key(source["locator"]):
+            raise ValidationError(f"binding media source mismatch: {external_id} -> {stable_id}")
     if len(set(bindings.values())) != len(bindings):
         raise ValidationError("multiple external entities cannot bind to the same stable ID")
 
@@ -211,13 +243,25 @@ def _reconcile(
         current_ext = current_external.get("entities", {}).get(external_id)
         base_project_props = _project_entity_properties(base_project, stable_id)
         current_project_props = _project_entity_properties(current_project, stable_id)
+        if base_project_props and not current_project_props:
+            raise ValidationError(
+                f"publishing deletion of a bound segment is not supported yet: {stable_id}"
+            )
         if base_ext is None:
             continue
         if current_ext is None:
-            changes.append({
+            deletion = {
                 "kind": "delete", "side": "human", "external_id": external_id,
                 "stable_id": stable_id, "field": "__deleted__", "base": base_ext, "value": None,
-            })
+            }
+            changes.append(deletion)
+            if base_project_props != current_project_props:
+                conflicts.append({
+                    "conflict_id": _conflict_id(stable_id, "__deleted__"),
+                    "stable_id": stable_id, "external_id": external_id, "field": "__deleted__",
+                    "base": base_project_props, "agent": current_project_props, "human": None,
+                    "base_external_entity": copy.deepcopy(base_ext),
+                })
             continue
         fields = set(base_project_props) | set(current_project_props) | set(base_ext.get("properties", {})) | set(current_ext.get("properties", {}))
         for field in sorted(fields):
@@ -253,7 +297,10 @@ def _reconcile(
     return {"schema_version": 1, "changes": changes, "conflicts": conflicts}
 
 
-def _human_operations(plan: Mapping[str, Any], resolutions: Mapping[str, str], *, adapter_id: str) -> list[dict[str, Any]]:
+def _human_operations(
+    plan: Mapping[str, Any], resolutions: Mapping[str, str], *, adapter_id: str,
+    current_project: Mapping[str, Any],
+) -> list[dict[str, Any]]:
     conflicts = {(item["stable_id"], item["field"]): item for item in plan["conflicts"]}
     segment_changes: dict[str, dict[str, Any]] = {}
     operations: list[dict[str, Any]] = []
@@ -262,15 +309,6 @@ def _human_operations(plan: Mapping[str, Any], resolutions: Mapping[str, str], *
         if change["side"] != "human":
             continue
         if change["kind"] == "external-add":
-            entity = change["value"]
-            stable_id = "EXT-JY-" + hashlib.sha256(change["external_id"].encode()).hexdigest()[:12].upper()
-            operations.append({
-                "op": "import_external_entity", "external_entity_id": stable_id,
-                "adapter_id": adapter_id, "external_id": change["external_id"],
-                "kind": entity.get("kind", "unknown"), "properties": entity.get("properties", {}),
-                "native": entity.get("native", {}),
-                "external_fingerprint": current_external["fingerprint"],
-            })
             continue
         key = (change["stable_id"], change["field"])
         conflict = conflicts.get(key)
@@ -279,16 +317,156 @@ def _human_operations(plan: Mapping[str, Any], resolutions: Mapping[str, str], *
         if change["field"] == "__deleted__":
             operations.append({"op": "remove_entity", "stable_id": change["stable_id"]})
             continue
+        if change["field"] == "timeline_duration":
+            properties = current_external["entities"][change["external_id"]]["properties"]
+            source_in = properties.get("source_in")
+            source_out = properties.get("source_out")
+            speed = properties.get("speed")
+            if not all(isinstance(value, (int, float)) for value in (source_in, source_out, speed)) or speed <= 0:
+                raise ValidationError(f"invalid Jianying timing for {change['external_id']}")
+            derived = (float(source_out) - float(source_in)) / float(speed)
+            if not _same(change["value"], derived):
+                raise ValidationError(
+                    f"independent timeline duration is not representable for {change['stable_id']}"
+                )
+            continue
         segment_changes.setdefault(change["stable_id"], {})[change["field"]] = change["value"]
     for stable_id, changes in segment_changes.items():
         operations.append({"op": "update_segment", "segment_id": stable_id, "changes": changes})
+    operations.extend(_opaque_operations(
+        current_external=current_external, bindings=plan["bindings"],
+        current_project=current_project, adapter_id=adapter_id,
+    ))
     return operations
+
+
+def _opaque_operations(
+    *, current_external: Mapping[str, Any], bindings: Mapping[str, str],
+    current_project: Mapping[str, Any], adapter_id: str,
+) -> list[dict[str, Any]]:
+    operations: list[dict[str, Any]] = []
+    existing = {
+        item.get("external_id"): (stable_id, item)
+        for stable_id, item in current_project.get("external_entities", {}).items()
+        if item.get("adapter_id") == adapter_id
+    }
+    bound_ids = set(bindings)
+    draft_id = str(current_external.get("draft_id") or "unknown")
+    desired_external_ids: set[str] = set()
+    for external_id, entity in sorted(current_external.get("entities", {}).items()):
+        if external_id in bound_ids:
+            continue
+        desired_external_ids.add(external_id)
+        properties = copy.deepcopy(dict(entity.get("properties", {})))
+        properties["draft_id"] = draft_id
+        operations.extend(_upsert_external(
+            external_id=external_id,
+            kind=entity.get("kind", "unknown"),
+            properties=properties,
+            native=entity.get("native", {}),
+            fingerprint=current_external["fingerprint"],
+            adapter_id=adapter_id,
+            existing=existing,
+        ))
+
+    opaque_id = f"draft:{draft_id}:opaque"
+    desired_external_ids.add(opaque_id)
+    opaque_native = {
+        "native_summary": copy.deepcopy(current_external.get("native_summary", {})),
+        "tracks": copy.deepcopy(current_external.get("tracks", {})),
+        "materials": copy.deepcopy(current_external.get("materials", {})),
+        "bound_entity_native": {
+            external_id: copy.deepcopy(current_external["entities"][external_id].get("native", {}))
+            for external_id in sorted(bound_ids)
+            if external_id in current_external.get("entities", {})
+        },
+    }
+    operations.extend(_upsert_external(
+        external_id=opaque_id,
+        kind="opaque-draft-ledger",
+        properties={
+            "draft_id": draft_id,
+            "track_count": len(current_external.get("tracks", {})),
+            "material_count": len(current_external.get("materials", {})),
+            "bound_entity_count": len(bound_ids),
+        },
+        native=opaque_native,
+        fingerprint=current_external["fingerprint"],
+        adapter_id=adapter_id,
+        existing=existing,
+    ))
+    for external_id, (stable_id, item) in sorted(existing.items()):
+        if (
+            external_id not in desired_external_ids
+            and item.get("properties", {}).get("draft_id") == draft_id
+        ):
+            operations.append({"op": "remove_entity", "stable_id": stable_id})
+    return operations
+
+
+def _upsert_external(
+    *, external_id: str, kind: str, properties: Mapping[str, Any], native: Mapping[str, Any],
+    fingerprint: str, adapter_id: str, existing: Mapping[str, tuple[str, Mapping[str, Any]]],
+) -> list[dict[str, Any]]:
+    desired = {
+        "kind": kind,
+        "properties": copy.deepcopy(dict(properties)),
+        "native": copy.deepcopy(dict(native)),
+        "external_fingerprint": fingerprint,
+    }
+    found = existing.get(external_id)
+    if found:
+        stable_id, current = found
+        changes = {key: value for key, value in desired.items() if current.get(key) != value}
+        return [{"op": "update_external_entity", "external_entity_id": stable_id, "changes": changes}] if changes else []
+    stable_id = "EXT-JY-" + hashlib.sha256(f"{adapter_id}:{external_id}".encode()).hexdigest()[:12].upper()
+    return [{
+        "op": "import_external_entity", "external_entity_id": stable_id,
+        "adapter_id": adapter_id, "external_id": external_id, **desired,
+    }]
 
 
 def _agent_patches(plan: Mapping[str, Any], resolutions: Mapping[str, str]) -> list[dict[str, Any]]:
     conflicts = {(item["stable_id"], item["field"]): item for item in plan["conflicts"]}
     external = plan["current_external"]
     patches: list[dict[str, Any]] = []
+    for conflict in plan["conflicts"]:
+        if conflict["field"] == "__deleted__" and resolutions.get(conflict["conflict_id"]) == "agent":
+            base_entity = conflict.get("base_external_entity", {})
+            track = external.get("tracks", {}).get(base_entity.get("track_external_id"), {})
+            collection_path = track.get("segment_collection_path")
+            segment_count = track.get("segment_count")
+            entity_path = (
+                f"{collection_path}/{segment_count}"
+                if collection_path and isinstance(segment_count, int) and segment_count >= 0 else None
+            )
+            native = base_entity.get("native")
+            base_entity_path = base_entity.get("entity_path")
+            property_paths = {
+                field: path.replace(base_entity_path, entity_path, 1)
+                for field, path in base_entity.get("property_paths", {}).items()
+                if base_entity_path and entity_path and path.startswith(base_entity_path)
+            }
+            agent = conflict.get("agent", {})
+            if not entity_path or not isinstance(native, Mapping):
+                raise ValidationError(f"adapter cannot restore deleted entity {conflict['external_id']}")
+            patches.append({
+                "op": "insert", "path": entity_path, "value": copy.deepcopy(dict(native)),
+                "stable_id": conflict["stable_id"],
+            })
+            for field in ("timeline_start", "timeline_duration", "source_in", "speed", "transform"):
+                if field in agent and property_paths.get(field):
+                    patches.append({
+                        "op": "set", "path": property_paths[field], "value": copy.deepcopy(agent[field]),
+                        "stable_id": conflict["stable_id"],
+                    })
+            duration_path = property_paths.get("source_duration")
+            if duration_path and isinstance(agent.get("source_in"), (int, float)) and isinstance(agent.get("source_out"), (int, float)):
+                patches.append({
+                    "op": "set", "path": duration_path,
+                    "value": float(agent["source_out"]) - float(agent["source_in"]),
+                    "stable_id": conflict["stable_id"],
+                })
     accepted: dict[tuple[str, str], dict[str, Any]] = {}
     for change in plan["changes"]:
         if change["side"] != "agent" or change["kind"] != "field":
@@ -351,12 +529,6 @@ def _validate_resolutions(conflicts: list[Mapping[str, Any]], resolutions: Mappi
 def _project_entity_properties(project: Mapping[str, Any], stable_id: str) -> dict[str, Any]:
     if stable_id in project.get("segments", {}):
         return _segment_properties(project["segments"][stable_id])
-    if stable_id in project.get("captions", {}):
-        item = project["captions"][stable_id]
-        return {key: copy.deepcopy(item.get(key)) for key in ("start", "end", "text", "style")}
-    if stable_id in project.get("controls", {}):
-        item = project["controls"][stable_id]
-        return {key: copy.deepcopy(item.get(key)) for key in ("active_range", "properties", "keyframes", "enabled")}
     return {}
 
 

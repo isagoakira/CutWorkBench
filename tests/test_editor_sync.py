@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import unittest
 from pathlib import Path
@@ -8,11 +9,14 @@ from tempfile import TemporaryDirectory
 
 from cut_workbench.editor_sync import EditorSync, SyncSessionStore
 from cut_workbench.errors import ValidationError
-from cut_workbench.jianying import JianyingDraftAdapter, PlainJsonCodec
+from cut_workbench.jianying import JianyingCodecCommand, JianyingDraftAdapter, PlainJsonCodec
 from cut_workbench.project_store import ProjectStore
 
 
-def external_snapshot(*, timeline_start: float = 0.0, speed: float = 1.0, extra: bool = False):
+def external_snapshot(
+    *, timeline_start: float = 0.0, speed: float = 1.0, source_in: float = 0.0,
+    source_out: float = 5.0, extra: bool = False, deleted: bool = False,
+):
     entities = {
         "jy-seg-1": {
             "external_id": "jy-seg-1",
@@ -21,8 +25,9 @@ def external_snapshot(*, timeline_start: float = 0.0, speed: float = 1.0, extra:
             "material_external_id": "jy-mat-1",
             "properties": {
                 "timeline_start": timeline_start,
-                "source_in": 0.0,
-                "source_out": 5.0,
+                "timeline_duration": (source_out - source_in) / speed,
+                "source_in": source_in,
+                "source_out": source_out,
                 "speed": speed,
                 "transform": {},
             },
@@ -33,6 +38,7 @@ def external_snapshot(*, timeline_start: float = 0.0, speed: float = 1.0, extra:
                 "source_duration": "/tracks/0/segments/0/source_timerange/duration",
                 "speed": "/tracks/0/segments/0/speed",
             },
+            "entity_path": "/tracks/0/segments/0",
             "native": {"id": "jy-seg-1"},
         }
     }
@@ -43,13 +49,19 @@ def external_snapshot(*, timeline_start: float = 0.0, speed: float = 1.0, extra:
             "properties": {"timeline_start": 1.0}, "property_paths": {},
             "native": {"id": "jy-human-added", "future_field": {"keep": True}},
         }
+    if deleted:
+        del entities["jy-seg-1"]
     return {
         "schema_version": 1,
         "adapter_id": "fake:jianying",
         "draft_id": "draft-1",
-        "fingerprint": f"fp-{timeline_start}-{speed}-{extra}",
+        "fingerprint": f"fp-{timeline_start}-{speed}-{source_in}-{source_out}-{extra}-{deleted}",
         "tracks": {
-            "jy-track-1": {"external_id": "jy-track-1", "kind": "video", "order": 0},
+            "jy-track-1": {
+                "external_id": "jy-track-1", "kind": "video", "order": 0,
+                "segment_collection_path": "/tracks/0/segments",
+                "segment_count": 0 if deleted else 1,
+            },
         },
         "materials": {
             "jy-mat-1": {"external_id": "jy-mat-1", "kind": "video", "path": "D:/media/source.mp4"},
@@ -79,6 +91,23 @@ class FakeAdapter:
 
 
 class JianyingAdapterTests(unittest.TestCase):
+    def test_codec_rechecks_the_staged_helper_against_the_mandatory_pin(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            helper = root / "helper.exe"
+            install = root / "install"
+            install.mkdir()
+            helper.write_bytes(b"pinned")
+            (install / "videoeditor.dll").write_bytes(b"dll")
+            expected = hashlib.sha256(b"pinned").hexdigest()
+            codec = JianyingCodecCommand(helper, install, expected_sha256=expected)
+            helper.write_bytes(b"replaced after initialization")
+            encrypted = root / "draft_content.json"
+            encrypted.write_bytes(b"payload")
+
+            with self.assertRaisesRegex(ValidationError, "no longer matches"):
+                codec.decode(encrypted)
+
     def test_publish_refuses_while_jianying_is_running_without_creating_destination(self) -> None:
         with TemporaryDirectory() as directory:
             source = Path(directory) / "source"
@@ -90,6 +119,21 @@ class JianyingAdapterTests(unittest.TestCase):
             )
 
             with self.assertRaisesRegex(ValidationError, "Jianying is running"):
+                adapter.publish(source, destination, [])
+            self.assertFalse(destination.exists())
+
+    def test_publish_discards_clone_if_jianying_starts_during_encoding(self) -> None:
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            destination = Path(directory) / "published"
+            source.mkdir()
+            (source / "draft_content.json").write_text("{}", encoding="utf-8")
+            states = iter((False, True))
+            adapter = JianyingDraftAdapter(
+                codec=PlainJsonCodec(), editor_version="fixture", process_checker=lambda: next(states)
+            )
+
+            with self.assertRaisesRegex(ValidationError, "started during publish"):
                 adapter.publish(source, destination, [])
             self.assertFalse(destination.exists())
 
@@ -148,6 +192,26 @@ class JianyingAdapterTests(unittest.TestCase):
         self.assertEqual(1.5, published["tracks"][0]["segments"][0]["speed"])
         self.assertEqual({"keep": True}, published["future_root"])
         self.assertEqual("published", receipt["status"])
+
+    def test_publish_can_restore_a_deleted_segment_at_its_native_index(self) -> None:
+        draft = {
+            "id": "draft-1", "materials": {"videos": []},
+            "tracks": [{"id": "track-1", "type": "video", "segments": []}],
+        }
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            destination = Path(directory) / "published"
+            source.mkdir()
+            (source / "draft_content.json").write_text(json.dumps(draft), encoding="utf-8")
+            adapter = JianyingDraftAdapter(
+                codec=PlainJsonCodec(), editor_version="fixture", process_checker=lambda: False
+            )
+            adapter.publish(source, destination, [{
+                "op": "insert", "path": "/tracks/0/segments/0", "value": {"id": "restored"},
+            }])
+            restored = json.loads((destination / "draft_content.json").read_text(encoding="utf-8"))
+
+        self.assertEqual("restored", restored["tracks"][0]["segments"][0]["id"])
 
 
 class EditorSyncTests(unittest.TestCase):
@@ -225,6 +289,27 @@ class EditorSyncTests(unittest.TestCase):
             external = store.read_project("sync")["external_entities"]
             self.assertEqual({"keep": True}, next(iter(external.values()))["native"]["future_field"])
 
+    def test_removed_opaque_entity_does_not_remain_as_a_ghost_record(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store, _ = self._project(root)
+            first_adapter = FakeAdapter([external_snapshot(extra=True), external_snapshot(extra=True)])
+            first = EditorSync(store=store, sessions=SyncSessionStore(root), adapter=first_adapter)
+            first_session = first.open(project_id="sync", draft_path="D:/drafts/demo")
+            first.preview(first_session["session_id"])
+            first.commit(first_session["session_id"], resolutions={})
+
+            second_adapter = FakeAdapter([external_snapshot(extra=True), external_snapshot(extra=False)])
+            second = EditorSync(store=store, sessions=SyncSessionStore(root), adapter=second_adapter)
+            second_session = second.open(project_id="sync", draft_path="D:/drafts/demo")
+            second.preview(second_session["session_id"])
+            second.commit(second_session["session_id"], resolutions={})
+
+            external_ids = {
+                item["external_id"] for item in store.read_project("sync")["external_entities"].values()
+            }
+            self.assertNotIn("jy-human-added", external_ids)
+
     def test_agent_source_range_is_published_as_jianying_start_and_duration(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -239,11 +324,120 @@ class EditorSyncTests(unittest.TestCase):
                 }}],
             )
             sync.preview(opened["session_id"])
+            sync.commit(opened["session_id"], resolutions={})
             receipt = sync.publish(opened["session_id"], destination_path="D:/drafts/demo-trimmed")
 
             by_path = {patch["path"]: patch["value"] for patch in receipt["patches"]}
             self.assertEqual(1.0, by_path["/tracks/0/segments/0/source_timerange/start"])
             self.assertEqual(3.0, by_path["/tracks/0/segments/0/source_timerange/duration"])
+
+    def test_manual_trim_commits_without_treating_derived_duration_as_a_project_field(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store, _ = self._project(root)
+            adapter = FakeAdapter([
+                external_snapshot(), external_snapshot(source_in=1.0, source_out=4.0),
+            ])
+            sync = EditorSync(store=store, sessions=SyncSessionStore(root), adapter=adapter)
+            opened = sync.open(project_id="sync", draft_path="D:/drafts/demo")
+            sync.preview(opened["session_id"])
+            sync.commit(opened["session_id"], resolutions={})
+
+            segment = store.read_project("sync")["segments"]["SEG-001"]
+            self.assertEqual((1.0, 4.0), (segment["source_in"], segment["source_out"]))
+
+    def test_commit_rejects_a_plan_after_project_changes(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store, project = self._project(root)
+            adapter = FakeAdapter([external_snapshot(), external_snapshot()])
+            sync = EditorSync(store=store, sessions=SyncSessionStore(root), adapter=adapter)
+            opened = sync.open(project_id="sync", draft_path="D:/drafts/demo")
+            sync.preview(opened["session_id"])
+            store.apply_plan(
+                project_id="sync", expected_revision=project["revision"], actor="agent", reason="late edit",
+                operations=[{"op": "update_segment", "segment_id": "SEG-001", "changes": {"speed": 1.2}}],
+            )
+
+            with self.assertRaisesRegex(ValidationError, "project changed after sync.preview"):
+                sync.commit(opened["session_id"], resolutions={})
+
+    def test_publish_requires_commit_and_opaque_baseline_is_journaled(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store, _ = self._project(root)
+            adapter = FakeAdapter([external_snapshot(), external_snapshot()])
+            sync = EditorSync(store=store, sessions=SyncSessionStore(root), adapter=adapter)
+            opened = sync.open(project_id="sync", draft_path="D:/drafts/demo")
+            sync.preview(opened["session_id"])
+            with self.assertRaisesRegex(ValidationError, "requires sync.commit"):
+                sync.publish(opened["session_id"], destination_path="D:/drafts/invalid")
+
+            sync.commit(opened["session_id"], resolutions={})
+            ledgers = [
+                item for item in store.read_project("sync")["external_entities"].values()
+                if item["kind"] == "opaque-draft-ledger"
+            ]
+            self.assertEqual(1, len(ledgers))
+            self.assertEqual("draft-1", ledgers[0]["properties"]["draft_id"])
+            with self.assertRaisesRegex(ValidationError, "cannot reopen"):
+                sync.preview(opened["session_id"])
+
+    def test_explicit_binding_rejects_non_segment_native_entity(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store, _ = self._project(root)
+            snapshot = external_snapshot(extra=True)
+            adapter = FakeAdapter([snapshot])
+            sync = EditorSync(store=store, sessions=SyncSessionStore(root), adapter=adapter)
+
+            with self.assertRaisesRegex(ValidationError, "requires an A/V segment"):
+                sync.open(
+                    project_id="sync", draft_path="D:/drafts/demo",
+                    bindings={"jy-human-added": "SEG-001"},
+                )
+
+    def test_delete_vs_agent_edit_conflict_can_restore_the_native_segment(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store, project = self._project(root)
+            adapter = FakeAdapter([external_snapshot(), external_snapshot(deleted=True)])
+            sync = EditorSync(store=store, sessions=SyncSessionStore(root), adapter=adapter)
+            opened = sync.open(project_id="sync", draft_path="D:/drafts/demo")
+            store.apply_plan(
+                project_id="sync", expected_revision=project["revision"], actor="agent", reason="speed",
+                operations=[{"op": "update_segment", "segment_id": "SEG-001", "changes": {"speed": 1.5}}],
+            )
+            preview = sync.preview(opened["session_id"])
+            conflict = next(item for item in preview["conflicts"] if item["field"] == "__deleted__")
+            sync.commit(opened["session_id"], resolutions={conflict["conflict_id"]: "agent"})
+            receipt = sync.publish(opened["session_id"], destination_path="D:/drafts/restored")
+
+            self.assertEqual("insert", receipt["patches"][0]["op"])
+            self.assertEqual("/tracks/0/segments/0", receipt["patches"][0]["path"])
+
+    def test_delete_restore_relocates_by_current_track_instead_of_baseline_index(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store, project = self._project(root)
+            current = external_snapshot(deleted=True)
+            current["tracks"]["jy-track-1"].update(
+                order=2, segment_collection_path="/tracks/2/segments", segment_count=3
+            )
+            current["fingerprint"] += "-reordered"
+            adapter = FakeAdapter([external_snapshot(), current])
+            sync = EditorSync(store=store, sessions=SyncSessionStore(root), adapter=adapter)
+            opened = sync.open(project_id="sync", draft_path="D:/drafts/demo")
+            store.apply_plan(
+                project_id="sync", expected_revision=project["revision"], actor="agent", reason="move",
+                operations=[{"op": "update_segment", "segment_id": "SEG-001", "changes": {"timeline_start": 2.0}}],
+            )
+            preview = sync.preview(opened["session_id"])
+            conflict = next(item for item in preview["conflicts"] if item["field"] == "__deleted__")
+            sync.commit(opened["session_id"], resolutions={conflict["conflict_id"]: "agent"})
+            receipt = sync.publish(opened["session_id"], destination_path="D:/drafts/relocated")
+
+            self.assertEqual("/tracks/2/segments/3", receipt["patches"][0]["path"])
 
 
 if __name__ == "__main__":

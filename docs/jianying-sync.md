@@ -7,7 +7,7 @@ The first adapter targets the locally installed Jianying Pro 11.3 line. It reads
 - `sync.open` and `sync.preview` are read-only.
 - `sync.commit` writes only a new Workbench revision.
 - `sync.publish` refuses a running Jianying process, refuses an existing destination, clones the complete source draft, and writes only the clone.
-- The codec executable is not bundled. Pin its SHA-256 with `--jianying-codec-sha256`; the adapter stages it with the selected installed `videoeditor.dll` in a temporary directory.
+- The codec executable is not bundled. Its SHA-256 is mandatory; the adapter stages the pinned helper in a temporary directory and points it at the selected installed `videoeditor.dll`.
 - Unknown Jianying objects are retained as opaque external entities. A full VectCut rebuild is rejected while such objects exist because it cannot prove lossless preservation.
 
 ## Start the MCP server
@@ -33,4 +33,4 @@ python -m cut_workbench.cli `
 
 ## Current typed surface
 
-The typed bidirectional writer covers A/V segment timeline position, timeline duration, source in/out, speed, and transform. Source out is translated to Jianying's source duration representation. Other native objects and future fields survive as opaque JSON but are not yet directly editable through Workbench operations.
+The typed bidirectional writer covers A/V segment timeline position, source in/out, speed, transform, and the timeline duration derived from those fields. Source out is translated to Jianying's source duration representation; an independently stretched duration that cannot be represented by source range and speed is rejected explicitly. Manual segment deletion is supported; Agent-originated deletion is currently rejected rather than flattened. Other native objects and future fields survive as opaque JSON but are not yet directly editable through Workbench operations.

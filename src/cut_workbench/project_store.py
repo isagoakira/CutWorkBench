@@ -241,6 +241,22 @@ class ProjectStore:
         }
 
     @staticmethod
+    def _op_update_external_entity(project: Project, operation: Operation) -> None:
+        stable_id = _required_id(operation, "external_entity_id")
+        entities = project.get("external_entities", {})
+        if stable_id not in entities:
+            raise ValidationError(f"unknown external entity: {stable_id}")
+        changes = operation.get("changes")
+        if not isinstance(changes, Mapping) or not changes:
+            raise ValidationError("update_external_entity changes must be a non-empty object")
+        allowed = {"kind", "properties", "native", "external_fingerprint"}
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValidationError(f"unsupported external entity changes: {sorted(unknown)}")
+        for key, value in changes.items():
+            entities[stable_id][key] = copy.deepcopy(value)
+
+    @staticmethod
     def _op_remove_entity(project: Project, operation: Operation) -> None:
         stable_id = _required_id(operation, "stable_id")
         if stable_id in project["segments"]:

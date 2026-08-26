@@ -34,6 +34,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.jianying_codec or args.jianying_install:
         if not args.jianying_codec or not args.jianying_install:
             parser.error("--jianying-codec and --jianying-install must be provided together")
+        if not args.jianying_codec_sha256:
+            parser.error("--jianying-codec-sha256 is required for an external Jianying codec")
         codec = JianyingCodecCommand(
             args.jianying_codec, args.jianying_install,
             expected_sha256=args.jianying_codec_sha256,
