@@ -85,6 +85,7 @@ class EditorSync:
         session = self.sessions.read(session_id)
         if session.get("status") not in {"open", "previewed"}:
             raise ValidationError("sync.preview cannot reopen a committed or published session")
+        self._assert_profile_pinned(session)
         base_project = self.store.read_project(session["project_id"], session["base_project_revision"])
         current_project = self.store.read_project(session["project_id"])
         current_external = dict(self.adapter.snapshot(session["draft_path"]))
@@ -113,6 +114,7 @@ class EditorSync:
         session = self.sessions.read(session_id)
         if session.get("status") != "previewed":
             raise ValidationError("sync.commit requires a fresh previewed session")
+        self._assert_profile_pinned(session)
         plan = session.get("latest_plan")
         if not plan:
             raise ValidationError("sync.preview must run before sync.commit")
@@ -130,8 +132,8 @@ class EditorSync:
             current = self.store.apply_plan(
                 project_id=session["project_id"],
                 expected_revision=current["revision"],
-                actor="human:jianying",
-                reason=f"import manual edits from sync session {session_id}",
+                actor=f"human:{self.adapter.adapter_id}",
+                reason=f"import manual edits from {self.adapter.adapter_id} sync session {session_id}",
                 operations=operations,
                 evidence=[
                     f"sync-session:{session_id}",
@@ -155,6 +157,7 @@ class EditorSync:
         session = self.sessions.read(session_id)
         if session.get("status") != "committed":
             raise ValidationError("sync.publish requires sync.commit and cannot be repeated")
+        self._assert_profile_pinned(session)
         plan = session.get("latest_plan")
         if not plan:
             raise ValidationError("sync.preview must run before sync.publish")
@@ -172,6 +175,58 @@ class EditorSync:
         session["publish_receipt"] = receipt
         self.sessions.write(session)
         return receipt
+
+    def _assert_profile_pinned(self, session: Mapping[str, Any]) -> None:
+        pinned = session.get("adapter_profile")
+        current = dict(self.adapter.profile())
+        if not isinstance(pinned, Mapping) or current != dict(pinned):
+            raise ValidationError("editor adapter profile changed after sync.open; open a new sync session")
+
+
+class EditorSyncRegistry:
+    """Routes the stable sync transaction to the adapter named by a project."""
+
+    def __init__(
+        self,
+        *,
+        store: ProjectStore,
+        sessions: SyncSessionStore,
+        adapters: Mapping[str, EditorAdapter],
+    ) -> None:
+        self.store = store
+        self.sessions = sessions
+        self.adapters = dict(adapters)
+        if not self.adapters:
+            raise ValidationError("editor sync registry requires at least one adapter")
+        for adapter_id, adapter in self.adapters.items():
+            if adapter.adapter_id != adapter_id:
+                raise ValidationError(f"editor adapter registry key does not match adapter ID: {adapter_id}")
+
+    def open(self, **arguments: Any) -> dict[str, Any]:
+        project = self.store.read_project(arguments["project_id"], arguments.get("revision"))
+        return self._sync_for_adapter(project.get("editor_adapter")).open(**arguments)
+
+    def preview(self, session_id: str) -> dict[str, Any]:
+        return self._sync_for_session(session_id).preview(session_id)
+
+    def commit(self, session_id: str, *, resolutions: Mapping[str, str]) -> dict[str, Any]:
+        return self._sync_for_session(session_id).commit(session_id, resolutions=resolutions)
+
+    def publish(self, session_id: str, *, destination_path: str) -> dict[str, Any]:
+        return self._sync_for_session(session_id).publish(session_id, destination_path=destination_path)
+
+    def _sync_for_session(self, session_id: str) -> EditorSync:
+        session = self.sessions.read(session_id)
+        profile = session.get("adapter_profile")
+        adapter_id = profile.get("adapter_id") if isinstance(profile, Mapping) else None
+        return self._sync_for_adapter(adapter_id)
+
+    def _sync_for_adapter(self, adapter_id: Any) -> EditorSync:
+        adapter = self.adapters.get(adapter_id)
+        if adapter is None:
+            available = ", ".join(sorted(self.adapters))
+            raise ValidationError(f"editor adapter is unavailable: {adapter_id!r}; available: {available}")
+        return EditorSync(store=self.store, sessions=self.sessions, adapter=adapter)
 
 
 def _auto_bind(project: Mapping[str, Any], external: Mapping[str, Any]) -> dict[str, str]:
@@ -485,23 +540,21 @@ def _agent_patches(plan: Mapping[str, Any], resolutions: Mapping[str, str]) -> l
             continue
         path = entity.get("property_paths", {}).get(change["field"])
         if not path:
-            raise ValidationError(
-                f"Jianying adapter cannot publish field {change['field']} for {change['stable_id']}"
-            )
+            raise ValidationError(f"editor adapter cannot publish field {change['field']} for {change['stable_id']}")
         patches.append({"op": "set", "path": path, "value": change["value"], "stable_id": change["stable_id"]})
 
-    # Jianying stores source start + duration, while the workbench exposes the
-    # safer source_in/source_out pair. Recalculate duration whenever either end
-    # changes so the other end is not shifted accidentally.
+    # Editors can expose the source pair directly, or a source start + duration
+    # representation. Recalculate duration only for the latter.
     for external_id in sorted(source_ranges):
         entity = external["entities"].get(external_id, {})
         paths = entity.get("property_paths", {})
         duration_path = paths.get("source_duration")
-        if not duration_path:
+        source_out_path = paths.get("source_out")
+        if not duration_path and not source_out_path:
             stable_id = next(
                 change["stable_id"] for (item_id, _), change in accepted.items() if item_id == external_id
             )
-            raise ValidationError(f"Jianying adapter cannot publish source range for {stable_id}")
+            raise ValidationError(f"editor adapter cannot publish source range for {stable_id}")
         properties = entity.get("properties", {})
         source_in_change = accepted.get((external_id, "source_in"))
         source_out_change = accepted.get((external_id, "source_out"))
@@ -510,10 +563,16 @@ def _agent_patches(plan: Mapping[str, Any], resolutions: Mapping[str, str]) -> l
         if not isinstance(source_in, (int, float)) or not isinstance(source_out, (int, float)) or source_out <= source_in:
             raise ValidationError(f"invalid source range for external entity {external_id}")
         stable_id = (source_out_change or source_in_change)["stable_id"]
-        patches.append({
-            "op": "set", "path": duration_path, "value": float(source_out) - float(source_in),
-            "stable_id": stable_id,
-        })
+        if duration_path:
+            patches.append({
+                "op": "set", "path": duration_path, "value": float(source_out) - float(source_in),
+                "stable_id": stable_id,
+            })
+        elif source_out_change:
+            patches.append({
+                "op": "set", "path": source_out_path, "value": float(source_out),
+                "stable_id": stable_id,
+            })
     return patches
 
 

@@ -130,7 +130,7 @@ class WorkbenchApp:
     def _sync(self) -> EditorSync:
         if self.editor_sync is None:
             raise RuntimeError(
-                "Jianying sync is not configured; start with --jianying-codec and --jianying-install"
+                "external editor sync is not configured; configure a Jianying codec or a local editor bridge"
             )
         return self.editor_sync
 
