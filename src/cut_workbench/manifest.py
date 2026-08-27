@@ -31,6 +31,16 @@ def render_cut_manifest(project: Mapping[str, Any], *, report: Mapping[str, Any]
     _append_records(lines, "Decisions", project.get("decisions", {}), "decision_id")
     _append_records(lines, "Capability downgrades", project.get("capability_downgrades", {}), "exception_id")
     _append_records(lines, "External editor entities", project.get("external_entities", {}), "external_entity_id")
+    workflow = project.get("production_workflow")
+    if workflow:
+        lines.extend(["", "## Production workflow", ""])
+        for stage_id, state in workflow["stages"].items():
+            lines.append(f"- `{stage_id}`: **{state['status']}** ({len(state['artifact_ids'])} artifacts)")
+            for artifact_id in state["artifact_ids"]:
+                artifact = workflow["artifacts"][artifact_id]
+                lines.append(
+                    f"  - `{artifact_id}` {artifact['kind']} v{artifact['version']} — {artifact['locator']}"
+                )
     lines.extend(["", "## Verification", ""])
     for item in project.get("verification", []):
         lines.append(f"- `{item['verification_id']}` {item['kind']}: {'PASS' if item['passed'] else 'FAIL'}")

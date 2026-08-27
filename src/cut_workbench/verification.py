@@ -81,6 +81,16 @@ def verify_project(project: Mapping[str, Any]) -> dict[str, Any]:
                 "message": "Review/handoff requires passed visual verification with evidence",
             })
 
+    workflow = project.get("production_workflow")
+    if workflow and project.get("status") in {"delivered", "handed_off"}:
+        final_approved = workflow["stages"]["09-final"]["status"] == "approved"
+        checks.append({"check": "production-final-stage", "target": "09-final", "passed": final_approved})
+        if not final_approved:
+            issues.append({
+                "code": "production-final-stage-unapproved", "target": "09-final",
+                "message": "Delivery requires an approved stage 09 package",
+            })
+
     return {
         "schema_version": 1,
         "project_id": project["project_id"],

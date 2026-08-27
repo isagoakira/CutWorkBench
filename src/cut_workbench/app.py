@@ -8,6 +8,7 @@ from .jobs import CapabilityJobStore
 from .local_providers import FfprobeProvider
 from .manifest import render_cut_manifest
 from .project_store import ProjectStore
+from .production_workflow import production_contract, production_status
 from .vectcut import VectCutCompiler
 from .verification import verify_project
 from .editor_sync import EditorSync
@@ -60,6 +61,10 @@ class WorkbenchApp:
             _tool("project.manifest", "Render the auditable cut manifest", {
                 "project_id": string, "revision": integer,
             }, ["project_id"]),
+            _tool("workflow.contract", "Read the canonical nine-stage production contract", {}, []),
+            _tool("workflow.status", "Read production-stage readiness and blockers", {
+                "project_id": string, "revision": integer,
+            }, ["project_id"]),
             _tool("capability.request", "Route work to a local provider or agent-native queue", {
                 "capability": string, "inputs": obj, "quality": {"enum": ["standard", "high"]},
                 "sensitivity": string, "constraints": obj,
@@ -96,6 +101,10 @@ class WorkbenchApp:
             "project.branch": lambda a: self.projects.branch_project(**dict(a)),
             "project.verify": self._verify,
             "project.manifest": self._manifest,
+            "workflow.contract": lambda a: production_contract(),
+            "workflow.status": lambda a: production_status(
+                self.projects.read_project(a["project_id"], a.get("revision"))
+            ),
             "capability.request": self._request_capability,
             "capability.pending": lambda a: self.jobs.pending(),
             "capability.submit": lambda a: self.capabilities.submit_agent_result(**dict(a)),

@@ -10,6 +10,12 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from .errors import ProjectNotFound, RevisionConflict, ValidationError
+from .production_workflow import (
+    PRODUCTION_OPERATION_NAMES,
+    apply_production_operation,
+    validate_production_workflow,
+)
+from .stable_ids import stable_id_exists
 
 
 Project = dict[str, Any]
@@ -53,6 +59,7 @@ class ProjectStore:
             "capability_downgrades": {},
             "verification": [],
             "external_entities": {},
+            "production_workflow": None,
         }
         self._validate_project(project)
         self._commit(project, actor="system", reason="create project", operations=[])
@@ -73,6 +80,7 @@ class ProjectStore:
         # contain this collection. Upgrade the in-memory view; the next normal
         # revision commit persists it without rewriting immutable history.
         project.setdefault("external_entities", {})
+        project.setdefault("production_workflow", None)
         return project
 
     def apply_plan(
@@ -132,6 +140,9 @@ class ProjectStore:
 
     def _apply_operation(self, project: Project, operation: Operation) -> None:
         op = operation.get("op")
+        if op in PRODUCTION_OPERATION_NAMES:
+            apply_production_operation(project, operation)
+            return
         handler = getattr(self, f"_op_{op}", None)
         if handler is None:
             raise ValidationError(f"unsupported operation: {op}")
@@ -437,6 +448,7 @@ class ProjectStore:
         for key in ("width", "height", "fps"):
             if not isinstance(canvas.get(key), (int, float)) or canvas[key] <= 0:
                 raise ValidationError(f"canvas.{key} must be positive")
+        validate_production_workflow(project)
 
     def _commit(
         self,
@@ -496,26 +508,12 @@ def _validate_path_id(value: str, name: str) -> None:
 
 
 def _ensure_unique(project: Project, stable_id: str) -> None:
-    collections = (
-        "sources", "tracks", "segments", "controls", "captions", "decisions",
-        "capability_downgrades",
-        "external_entities",
-    )
-    if any(stable_id in project.get(name, {}) for name in collections) or any(
-        item.get("verification_id") == stable_id for item in project.get("verification", [])
-    ):
+    if stable_id_exists(project, stable_id):
         raise ValidationError(f"stable id already exists: {stable_id}")
 
 
 def _stable_id_exists(project: Project, stable_id: str) -> bool:
-    collections = (
-        "sources", "tracks", "segments", "controls", "captions", "decisions",
-        "capability_downgrades",
-        "external_entities",
-    )
-    return any(stable_id in project.get(name, {}) for name in collections) or any(
-        item.get("verification_id") == stable_id for item in project.get("verification", [])
-    )
+    return stable_id_exists(project, stable_id)
 
 
 def _validate_source_audit(
@@ -547,6 +545,7 @@ def content_fingerprint(project: Mapping[str, Any]) -> str:
         for key in (
             "canvas", "editor_adapter", "sources", "tracks", "segments", "controls", "captions",
             "external_entities",
+            "production_workflow",
         )
     }
     encoded = json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
