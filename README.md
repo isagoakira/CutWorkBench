@@ -143,7 +143,88 @@ sync.open → sync.preview → sync.commit → sync.publish clone
 
 轻量任务可以配置为本地 provider，高精度任务可以保留给 Agent。默认策略包括媒体探测、逐词转写、静音/节拍/镜头检测、帧理解、编辑规划与语义验证。
 
-本地 TTS 也通过同一个 capability seam 接入：把 GPT-SoVITS、CosyVoice 或其他引擎包装为 `json-command` provider，声明例如 `audio.synthesize.tts` 的 capability，再在 routing 中选择 `local`。建议每条字幕 cue 生成独立音频文件和独立 segment，并保存参考音频、自然时长版本、拟合后版本及测量证据；不要只留下一个不可拆分的整轨 WAV。
+### 配置本地 TTS
+
+本地 TTS 通过同一个 capability seam 接入。把 GPT-SoVITS、CosyVoice 或其他引擎包装成 JSON stdin/stdout sidecar，然后创建例如 `D:/cut-config/runtime-config.json`：
+
+```json
+{
+  "providers": [
+    {
+      "kind": "ffprobe",
+      "executable": "ffprobe"
+    },
+    {
+      "kind": "json-command",
+      "provider_id": "local:gpt-sovits",
+      "capabilities": ["audio.synthesize.tts"],
+      "command": ["python", "D:/tools/tts_sidecar.py"],
+      "timeout": 3600
+    }
+  ],
+  "routing": {
+    "default_route": "agent",
+    "rules": {
+      "media.probe": {"standard": "local", "high": "local"},
+      "audio.synthesize.tts": {"standard": "local", "high": "local"}
+    }
+  }
+}
+```
+
+启动 Workbench 时加载它：
+
+```powershell
+cut-workbench --root D:/cut-runtime `
+  --config D:/cut-config/runtime-config.json `
+  mcp
+```
+
+`json-command` 不经过 shell，而是按 `command` 数组直接启动进程。Workbench 会向 sidecar 的 stdin 写入一个 JSON 对象；TTS 建议接受以下字段：
+
+```json
+{
+  "capability": "audio.synthesize.tts",
+  "inputs": {
+    "text": "欢迎来到太忆空间。",
+    "output_path": "D:/video-project/06_口播与音频/VO_S01_001.wav",
+    "voice_id": "speaker-01",
+    "reference_audio": "D:/voices/speaker-01.wav"
+  },
+  "quality": "standard",
+  "sensitivity": "local-only",
+  "constraints": {
+    "sample_rate": 48000,
+    "format": "wav"
+  }
+}
+```
+
+sidecar 的 stdout 必须只输出一个结果对象，运行日志应写入 stderr：
+
+```json
+{
+  "payload": {
+    "audio_path": "D:/video-project/06_口播与音频/VO_S01_001.wav",
+    "duration_seconds": 2.84,
+    "sample_rate": 48000,
+    "voice_id": "speaker-01"
+  },
+  "evidence": [
+    "D:/video-project/06_口播与音频/VO_S01_001.wav"
+  ]
+}
+```
+
+可以直接验证路由和 sidecar：
+
+```powershell
+cut-workbench --root D:/cut-runtime `
+  --config D:/cut-config/runtime-config.json `
+  call capability.request '{"capability":"audio.synthesize.tts","inputs":{"text":"测试配音","output_path":"D:/cut-runtime/tts-test.wav"},"quality":"standard","sensitivity":"local-only","constraints":{"format":"wav"}}'
+```
+
+`audio.synthesize.tts` 默认优先选择可用的本地 provider；如果配置中没有声明该 capability 的 provider，任务会降级进入 `pending_agent`，不会假装本地生成成功。建议每条字幕 cue 生成独立音频文件和独立 segment，并保存参考音频、自然时长版本、拟合后版本及测量证据；不要只留下一个不可拆分的整轨 WAV。
 
 仓库不包含任何 TTS 模型、声音权重或特定机器的绝对路径。
 
