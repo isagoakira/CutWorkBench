@@ -7,14 +7,16 @@ Codex / Claude / future Agent
              |
         MCP JSON tools
              v
-        WorkbenchApp
-      /       |        \
-ProjectStore  Capability  Editor adapters
-(revisions)   router      /            \
-                  |    VectCut compiler  Jianying sync
-        local JSON process   HTTP         snapshot/clone
-        or pending Agent job
+                  WorkbenchApp
+          /          |          |          \
+ ProjectStore    Capability  Generation   Editor sync
+ (revisions)      router        seam          seam
+      |          /      \         |         /    \
+ VectCut     local JSON  Agent  TapNow   Jianying  Adobe
+ compiler      process   jobs   adapter    sync     bridge
 ```
+
+The generation branch dispatches provider-neutral image/video operations through an injected `GenerativeAdapter`. The default `TapNowAgenticAdapter` compiles a durable instruction packet for an Agent executor rather than importing a TapNow SDK or relying on undocumented browser endpoints. It requires explicit spend and external-upload approvals, validates returned canvas/file evidence, and emits ready-to-apply workflow artifact operations.
 
 ## Stable seams
 

@@ -12,6 +12,7 @@ from .production_workflow import production_contract, production_status
 from .vectcut import VectCutCompiler
 from .verification import verify_project
 from .editor_sync import EditorSync
+from .tapnow import GenerativeOrchestrator, TapNowAgenticAdapter
 
 
 class WorkbenchApp:
@@ -24,6 +25,7 @@ class WorkbenchApp:
         registry: ProviderRegistry | None = None,
         policy: RoutingPolicy | None = None,
         editor_sync: EditorSync | None = None,
+        generative: GenerativeOrchestrator | None = None,
     ) -> None:
         self.root = Path(root)
         self.projects = ProjectStore(self.root)
@@ -35,6 +37,9 @@ class WorkbenchApp:
         )
         self.vectcut = VectCutCompiler()
         self.editor_sync = editor_sync
+        self.generative = generative or GenerativeOrchestrator(
+            jobs=self.jobs, adapter=TapNowAgenticAdapter(artifact_root=self.root)
+        )
 
     def list_tools(self) -> list[dict[str, Any]]:
         string = {"type": "string"}
@@ -74,6 +79,37 @@ class WorkbenchApp:
                 "job_id": string, "agent_id": string, "payload": obj,
                 "evidence": {"type": "array", "items": string},
             }, ["job_id", "agent_id", "payload", "evidence"]),
+            _tool("generation.contract", "Read the agentic generative operation contract", {}, []),
+            _tool("generation.request", "Dispatch a provider-neutral generation operation", {
+                "capability": string, "prompt": string,
+                "references": {"type": "array", "items": obj}, "output": obj,
+                "constraints": obj, "artifact_targets": {"type": "array", "items": obj},
+                "acceptance_criteria": {"type": "array", "items": string},
+            }, ["capability", "prompt", "references", "output", "constraints"]),
+            _tool("generation.pending", "List operations awaiting a generative Agent executor", {}, []),
+            _tool("generation.reconciliation", "List authorized generation jobs requiring manual reconciliation", {}, []),
+            _tool("generation.claim", "Claim one generative operation before external execution", {
+                "job_id": string, "executor_id": string,
+                "lease_seconds": {"type": "number", "exclusiveMinimum": 0},
+            }, ["job_id", "executor_id"]),
+            _tool("generation.heartbeat", "Renew a claimed generation operation lease", {
+                "job_id": string, "executor_id": string,
+                "lease_seconds": {"type": "number", "exclusiveMinimum": 0},
+            }, ["job_id", "executor_id"]),
+            _tool("generation.approve", "Approve one prepared operation for bounded generation", {
+                "prepared_job_id": string, "approved_by": string,
+                "billing_mode": {"enum": ["tapies", "unlimited"]},
+                "max_candidates": integer, "max_tapies": {"type": "number", "minimum": 0},
+                "evidence": {"type": "array", "items": string},
+            }, ["prepared_job_id", "approved_by", "billing_mode", "max_candidates", "evidence"]),
+            _tool("generation.authorize", "Validate live preflight and authorize external generation", {
+                "job_id": string, "executor_id": string, "preflight": obj,
+                "evidence": {"type": "array", "items": string},
+            }, ["job_id", "executor_id", "preflight", "evidence"]),
+            _tool("generation.submit", "Submit a validated generative result and artifact plan", {
+                "job_id": string, "executor_id": string, "payload": obj,
+                "evidence": {"type": "array", "items": string},
+            }, ["job_id", "executor_id", "payload", "evidence"]),
             _tool("vectcut.compile", "Compile a project revision to a separable VectCut call plan", {
                 "project_id": string, "revision": integer, "draft_folder": string,
             }, ["project_id"]),
@@ -108,6 +144,15 @@ class WorkbenchApp:
             "capability.request": self._request_capability,
             "capability.pending": lambda a: self.jobs.pending(),
             "capability.submit": lambda a: self.capabilities.submit_agent_result(**dict(a)),
+            "generation.contract": lambda a: self.generative.contract(),
+            "generation.request": lambda a: self.generative.request(a),
+            "generation.pending": lambda a: self.generative.pending(),
+            "generation.reconciliation": lambda a: self.generative.reconciliation(),
+            "generation.claim": lambda a: self.generative.claim(**dict(a)),
+            "generation.heartbeat": lambda a: self.generative.heartbeat(**dict(a)),
+            "generation.approve": lambda a: self.generative.approve(**dict(a)),
+            "generation.authorize": lambda a: self.generative.authorize(**dict(a)),
+            "generation.submit": lambda a: self.generative.submit(**dict(a)),
             "vectcut.compile": self._compile_vectcut,
             "sync.open": lambda a: self._sync().open(**dict(a)),
             "sync.preview": lambda a: self._sync().preview(a["session_id"]),

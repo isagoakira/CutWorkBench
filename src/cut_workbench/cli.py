@@ -12,6 +12,7 @@ from .editor_sync import EditorSyncRegistry, SyncSessionStore
 from .jianying import JianyingCodecCommand, JianyingDraftAdapter, discover_jianying_draft_index
 from .local_editor import AfterEffectsAdapter, LocalFileBridge, PremiereAdapter, panel_tree_hash
 from .project_store import ProjectStore
+from .generation_worker import GenerationWorker, JsonCommandGenerationExecutor
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -43,6 +44,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     call = subparsers.add_parser("call", help="Call a workbench tool with JSON arguments")
     call.add_argument("tool")
     call.add_argument("arguments", help="JSON object")
+    worker = subparsers.add_parser(
+        "generation-worker-once", help="Execute one pending generation through a local Agent command"
+    )
+    worker.add_argument("--executor-id", required=True)
+    worker.add_argument("--agent-command-json", required=True, help="JSON array command and arguments")
+    worker.add_argument("--timeout", type=float, default=3600)
     args = parser.parse_args(argv)
 
     if args.command == "bridge-hash":
@@ -98,6 +105,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command == "list-tools":
         print(json.dumps(app.list_tools(), indent=2, ensure_ascii=False))
+        return 0
+    if args.command == "generation-worker-once":
+        command = json.loads(args.agent_command_json)
+        if not isinstance(command, list) or not all(isinstance(item, str) for item in command):
+            parser.error("--agent-command-json must be a JSON array of strings")
+        value = GenerationWorker(
+            orchestrator=app.generative, jobs=app.jobs,
+            executor=JsonCommandGenerationExecutor(command, timeout=args.timeout),
+            executor_id=args.executor_id,
+            lease_seconds=args.timeout + 60,
+        ).run_once()
+        print(json.dumps(value, indent=2, ensure_ascii=False))
         return 0
     value = app.call_tool(args.tool, json.loads(args.arguments))
     print(json.dumps(value, indent=2, ensure_ascii=False))

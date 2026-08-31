@@ -41,6 +41,24 @@ class McpSurfaceTests(unittest.TestCase):
             self.assertIn("project.create", names)
             self.assertIn("capability.request", names)
             self.assertIn("vectcut.compile", names)
+            self.assertTrue({
+                "generation.contract", "generation.request", "generation.pending",
+                "generation.reconciliation",
+                "generation.claim", "generation.heartbeat", "generation.approve",
+                "generation.authorize", "generation.submit"
+            } <= names)
+
+            generation = app.call_tool("generation.request", {
+                "capability": "image.generate", "prompt": "产品主视觉", "references": [],
+                "output": {"count": 1, "aspect_ratio": "1:1"},
+                "constraints": {"execution_boundary": "preview"},
+            })
+            self.assertEqual("pending_provider", generation["status"])
+            self.assertEqual(generation["job_id"], app.call_tool("generation.pending", {})[0]["job_id"])
+            claimed = app.call_tool("generation.claim", {
+                "job_id": generation["job_id"], "executor_id": "agent:test",
+            })
+            self.assertEqual("running_provider", claimed["status"])
 
             created = app.call_tool("project.create", {
                 "project_id": "portable", "title": "Portable",
