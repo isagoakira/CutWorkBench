@@ -84,6 +84,48 @@ $env:PYTHONPATH = 'src'
 python -m cut_workbench.cli --root D:/cut-runtime list-tools
 ```
 
+## 本地部署
+
+Workbench 核心不需要 Docker、数据库、Web 服务或本地 LLM。它作为一个本地 Python 进程运行，并通过 stdio MCP 与 Agent 通信；项目 revision、journal、能力任务和编辑器同步会话都保存在 `--root` 指定的运行目录。
+
+不要把运行目录放进源码目录。推荐把代码、运行状态、项目素材和本地工具分开：
+
+```text
+D:/projects/CutWorkBench/     # 本仓库与 Python 虚拟环境
+D:/cut-runtime/               # revision、journal、capability-jobs、同步会话
+D:/video-projects/            # 原始素材、剪辑工程、字幕、交付文件
+D:/cut-config/                # runtime-config.json 等本机配置
+D:/tools/                     # Whisper、TTS、codec 等 sidecar
+```
+
+先创建运行目录并做健康检查：
+
+```powershell
+$workbenchRoot = 'D:/cut-runtime'
+New-Item -ItemType Directory -Force $workbenchRoot | Out-Null
+cut-workbench --root $workbenchRoot list-tools
+```
+
+部署完成后，Workbench 不会监听网络端口；通常由 Agent 按需启动 stdio MCP：
+
+```powershell
+cut-workbench --root D:/cut-runtime mcp
+```
+
+### 按需追加本地组件
+
+| 组件 | 是否必需 | 接入方式 |
+| --- | --- | --- |
+| FFmpeg / `ffprobe` | 推荐 | 安装 FFmpeg 并加入 `PATH`；用于本地媒体探测。 |
+| Whisper、镜头/静音/节拍检测 | 可选 | 作为 `json-command` sidecar 写入运行时配置。 |
+| GPT-SoVITS、CosyVoice 等 TTS | 可选 | 使用 `audio.synthesize.tts` sidecar；见下方 TTS 配置。 |
+| 剪映专业版 | 可选 | 额外提供本机 codec sidecar，并固定 codec 版本与 SHA-256。 |
+| Premiere Pro / After Effects | 可选 | 安装仓库提供的 CEP 面板和本机文件桥；先做快照/preview，再允许克隆发布。 |
+| TapNow | 可选 | 以本地 Agent 命令消费 generation job，不调用未公开的网页接口。 |
+| VectCutAPI | 可选 | 单独启动本地 VectCutAPI；Workbench 仅编译并审计多轨调用计划。 |
+
+推荐部署顺序是：**核心 MCP → FFmpeg → Whisper/TTS → 剪映 → Premiere/AE → TapNow 或 VectCutAPI**。每一层都可以单独验证，缺少某个可选组件不会阻塞核心工程、审计和 MCP 工作流。
+
 ## 接入 Agent
 
 任何支持 stdio MCP 的 Agent 都可以使用同一启动命令：
