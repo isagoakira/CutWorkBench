@@ -1,0 +1,28 @@
+{
+  "providers": [
+    {
+      "kind": "ffprobe",
+      "executable": "ffprobe"
+    },
+    {
+      "kind": "json-command",
+      "provider_id": "local:whisper-sidecar",
+      "capabilities": ["audio.transcribe.words"],
+      "command": ["python", "D:/tools/whisper_sidecar.py"],
+      "timeout": 3600
+    }
+  ],
+  "routing": {
+    "default_route": "agent",
+    "rules": {
+      "media.probe": {"standard": "local", "high": "local"},
+      "audio.transcribe.words": {"standard": "local", "high": "agent"},
+      "audio.detect.silence": {"standard": "local", "high": "local"},
+      "audio.detect.beats": {"standard": "local", "high": "agent"},
+      "video.detect.scenes": {"standard": "local", "high": "agent"},
+      "video.interpret.frames": {"standard": "agent", "high": "agent"},
+      "edit.plan": {"standard": "agent", "high": "agent"},
+      "edit.verify.semantic": {"standard": "agent", "high": "agent"}
+    }
+  }
+}
