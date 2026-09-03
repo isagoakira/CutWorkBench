@@ -42,6 +42,18 @@ Structured, sentence- or intent-level speech timing and semantics used during ed
 
 The approved stage 09 outputs: locked master, platform variants, final subtitle and delivery notes, plus optional supplemental voice assets.
 
+### Generation Context Pack
+
+An immutable projection of approved script, storyboard, material-list artifacts and declared source assets into a globally constrained, shot-ordered Canvas plan. It is the handoff to an interactive generative workspace; it never replaces the upstream master or material plan.
+
+### Canvas Node Plan
+
+The dependency-ordered instructions for building a Canvas: global context first, then explicitly approved sources, then one brief and optional generation node per shot. A node may reference only its declared sources and prior generative outputs.
+
+### Canvas Import Pack
+
+A hash-verified, de-duplicated local staging directory derived from one Generation Context Pack. It records the only files approved for upload and requires a complete mapping from each local artifact to one Canvas node after an external upload.
+
 ## Invariants
 
 - Original source media is never overwritten.

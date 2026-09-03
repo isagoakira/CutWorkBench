@@ -121,7 +121,7 @@ cut-workbench --root D:/cut-runtime mcp
 | GPT-SoVITS、CosyVoice 等 TTS | 可选 | 使用 `audio.synthesize.tts` sidecar；见下方 TTS 配置。 |
 | 剪映专业版 | 可选 | 额外提供本机 codec sidecar，并固定 codec 版本与 SHA-256。 |
 | Premiere Pro / After Effects | 可选 | 安装仓库提供的 CEP 面板和本机文件桥；先做快照/preview，再允许克隆发布。 |
-| TapNow | 可选 | 以本地 Agent 命令消费 generation job，不调用未公开的网页接口。 |
+| TapNow | 可选 | 将已锁定的脚本、分镜和素材计划编译为 Canvas 节点、Ask-mode 执行简报和网页端交接包；由 TapNow Agent 在网页内执行，不调用未公开接口。 |
 | VectCutAPI | 可选 | 单独启动本地 VectCutAPI；Workbench 仅编译并审计多轨调用计划。 |
 
 推荐部署顺序是：**核心 MCP → FFmpeg → Whisper/TTS → 剪映 → Premiere/AE → TapNow 或 VectCutAPI**。每一层都可以单独验证，缺少某个可选组件不会阻塞核心工程、审计和 MCP 工作流。
@@ -178,6 +178,7 @@ sync.open → sync.preview → sync.commit → sync.publish clone
 | 能力 | `capability.request`、`capability.pending`、`capability.submit` |
 | 编译 | `vectcut.compile` |
 | 外部编辑器 | `sync.open`、`sync.preview`、`sync.commit`、`sync.publish` |
+| TapNow 上下文工程 | `tapnow.context.compile`、`tapnow.assets.stage`、`tapnow.web.handoff`、`tapnow.canvas.reconcile` |
 
 用 `cut-workbench --root D:/cut-runtime list-tools` 可获取完整 JSON Schema。
 
@@ -295,6 +296,7 @@ cut-workbench --root D:/cut-runtime `
 - [架构与稳定边界](docs/architecture.md)
 - [实现规格与非目标](docs/spec.md)
 - [剪映双向同步](docs/jianying-sync.md)
+- [TapNow 上下文工程](docs/tapnow-context-engineering.md)
 - [Premiere / After Effects 本机桥接](docs/adobe-local-bridge.md)
 - [PR / AE 开源方案调研](docs/premiere-after-effects-open-source-research.md)
 - [运行时配置示例](examples/runtime-config.json)

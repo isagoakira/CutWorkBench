@@ -13,6 +13,9 @@ from .vectcut import VectCutCompiler
 from .verification import verify_project
 from .editor_sync import EditorSync
 from .tapnow import GenerativeOrchestrator, TapNowAgenticAdapter
+from .tapnow_context import TapNowContextCompiler
+from .tapnow_assets import TapNowAssetStager
+from .tapnow_web import TapNowWebHandoffRenderer
 
 
 class WorkbenchApp:
@@ -40,6 +43,9 @@ class WorkbenchApp:
         self.generative = generative or GenerativeOrchestrator(
             jobs=self.jobs, adapter=TapNowAgenticAdapter(artifact_root=self.root)
         )
+        self.tapnow_context = TapNowContextCompiler()
+        self.tapnow_assets = TapNowAssetStager(self.root)
+        self.tapnow_web = TapNowWebHandoffRenderer(self.root)
 
     def list_tools(self) -> list[dict[str, Any]]:
         string = {"type": "string"}
@@ -80,6 +86,20 @@ class WorkbenchApp:
                 "evidence": {"type": "array", "items": string},
             }, ["job_id", "agent_id", "payload", "evidence"]),
             _tool("generation.contract", "Read the agentic generative operation contract", {}, []),
+            _tool("tapnow.context.compile", "Compile approved upstream deliveries into an ordered TapNow Canvas context plan and Ask-mode handoff brief", {
+                "project_id": string, "revision": integer, "upstream": obj,
+            }, ["project_id", "upstream"]),
+            _tool("tapnow.assets.stage", "Create a hash-verified local Canvas Import Pack from one TapNow context plan; it never uploads files", {
+                "project_id": string, "revision": integer, "context_plan": obj,
+            }, ["project_id", "context_plan"]),
+            _tool("tapnow.web.handoff", "Render a human-executable TapNow Web task card, Agent brief and node-mapping template from one staged import pack; it never automates the browser", {
+                "project_id": string, "revision": integer, "context_plan": obj, "import_pack": obj,
+            }, ["project_id", "context_plan", "import_pack"]),
+            _tool("tapnow.canvas.reconcile", "Record approved uploads by mapping every staged local artifact to its TapNow Canvas node", {
+                "project_id": string, "revision": integer, "context_plan": obj, "import_id": string,
+                "canvas_url": string, "node_mappings": {"type": "array", "items": obj},
+                "external_upload_approval": obj,
+            }, ["project_id", "context_plan", "import_id", "canvas_url", "node_mappings", "external_upload_approval"]),
             _tool("generation.request", "Dispatch a provider-neutral generation operation", {
                 "capability": string, "prompt": string,
                 "references": {"type": "array", "items": obj}, "output": obj,
@@ -145,6 +165,10 @@ class WorkbenchApp:
             "capability.pending": lambda a: self.jobs.pending(),
             "capability.submit": lambda a: self.capabilities.submit_agent_result(**dict(a)),
             "generation.contract": lambda a: self.generative.contract(),
+            "tapnow.context.compile": self._compile_tapnow_context,
+            "tapnow.assets.stage": self._stage_tapnow_assets,
+            "tapnow.web.handoff": self._render_tapnow_web_handoff,
+            "tapnow.canvas.reconcile": self._reconcile_tapnow_canvas,
             "generation.request": lambda a: self.generative.request(a),
             "generation.pending": lambda a: self.generative.pending(),
             "generation.reconciliation": lambda a: self.generative.reconciliation(),
@@ -180,6 +204,28 @@ class WorkbenchApp:
     def _compile_vectcut(self, arguments: Mapping[str, Any]) -> Any:
         project = self.projects.read_project(arguments["project_id"], arguments.get("revision"))
         return self.vectcut.compile(project, draft_folder=arguments.get("draft_folder"))
+
+    def _compile_tapnow_context(self, arguments: Mapping[str, Any]) -> Any:
+        project = self.projects.read_project(arguments["project_id"], arguments.get("revision"))
+        return self.tapnow_context.compile(project=project, upstream=arguments["upstream"])
+
+    def _stage_tapnow_assets(self, arguments: Mapping[str, Any]) -> Any:
+        project = self.projects.read_project(arguments["project_id"], arguments.get("revision"))
+        return self.tapnow_assets.stage(project=project, context_plan=arguments["context_plan"])
+
+    def _render_tapnow_web_handoff(self, arguments: Mapping[str, Any]) -> Any:
+        project = self.projects.read_project(arguments["project_id"], arguments.get("revision"))
+        return self.tapnow_web.render(
+            project=project, context_plan=arguments["context_plan"], import_pack=arguments["import_pack"],
+        )
+
+    def _reconcile_tapnow_canvas(self, arguments: Mapping[str, Any]) -> Any:
+        project = self.projects.read_project(arguments["project_id"], arguments.get("revision"))
+        return self.tapnow_assets.reconcile(
+            project=project, context_plan=arguments["context_plan"], import_id=arguments["import_id"],
+            canvas_url=arguments["canvas_url"], node_mappings=arguments["node_mappings"],
+            external_upload_approval=arguments["external_upload_approval"],
+        )
 
     def _sync(self) -> EditorSync:
         if self.editor_sync is None:
