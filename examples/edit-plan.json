@@ -1,0 +1,27 @@
+{
+  "project_id": "demo",
+  "expected_revision": 1,
+  "actor": "agent:codex",
+  "reason": "Register source and build independently editable base/caption tracks",
+  "operations": [
+    {
+      "op": "register_source", "source_id": "SRC-001", "locator": "D:/media/original.mp4",
+      "sha256": "replace-with-real-sha256", "media_profile": {"duration": 5.7}
+    },
+    {"op": "add_track", "track_id": "V1-BASE", "kind": "video", "purpose": "base"},
+    {"op": "add_track", "track_id": "S1-CAPTIONS", "kind": "caption", "purpose": "captions"},
+    {
+      "op": "add_segment", "segment_id": "SEG-SRC001-001", "source_id": "SRC-001",
+      "track_id": "V1-BASE", "source_in": 2.4, "source_out": 8.1, "timeline_start": 0
+    },
+    {
+      "op": "record_decision", "decision_id": "DEC-AUDIT-SRC001", "kind": "source_audit",
+      "summary": "Full 2 fps source audit", "source_id": "SRC-001",
+      "evidence": ["audit/SRC-001/contact-sheet-2fps.jpg"],
+      "data": {
+        "sample_fps": 2, "sample_count": 12,
+        "coverage_range": {"start": 0, "end": 5.7}, "escalations": []
+      }
+    }
+  ]
+}
