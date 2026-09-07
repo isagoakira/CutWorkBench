@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol
 
 from .errors import ProjectNotFound, ValidationError
+from .draft_naming import default_draft_name
 from .project_store import ProjectStore
 
 
@@ -159,7 +160,14 @@ class EditorSync:
             "resolutions": resolved,
         }
 
-    def publish(self, session_id: str, *, destination_path: str) -> dict[str, Any]:
+    def publish(
+        self,
+        session_id: str,
+        *,
+        destination_path: str | None = None,
+        change_summary: str | None = None,
+        release_version: int | None = None,
+    ) -> dict[str, Any]:
         session = self.sessions.read(session_id)
         if session.get("status") != "committed":
             raise ValidationError("sync.publish requires sync.commit and cannot be repeated")
@@ -176,6 +184,15 @@ class EditorSync:
         if current_external["fingerprint"] != plan["current_external_fingerprint"]:
             raise ValidationError("Jianying draft changed after sync.commit; open a new sync session")
         patches = _agent_patches(plan, resolved, current_project=current)
+        if destination_path is None:
+            destination_path = str(
+                Path(session["draft_path"]).resolve().parent / default_draft_name(
+                    current["title"],
+                    revision=current["revision"],
+                    change_summary=change_summary,
+                    release_version=release_version,
+                )
+            )
         receipt = dict(self.adapter.publish(session["draft_path"], destination_path, patches))
         session["status"] = "published"
         session["publish_receipt"] = receipt
@@ -218,8 +235,8 @@ class EditorSyncRegistry:
     def commit(self, session_id: str, *, resolutions: Mapping[str, str]) -> dict[str, Any]:
         return self._sync_for_session(session_id).commit(session_id, resolutions=resolutions)
 
-    def publish(self, session_id: str, *, destination_path: str) -> dict[str, Any]:
-        return self._sync_for_session(session_id).publish(session_id, destination_path=destination_path)
+    def publish(self, session_id: str, **arguments: Any) -> dict[str, Any]:
+        return self._sync_for_session(session_id).publish(session_id, **arguments)
 
     def _sync_for_session(self, session_id: str) -> EditorSync:
         session = self.sessions.read(session_id)

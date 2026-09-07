@@ -169,6 +169,24 @@ class JianyingAdapterTests(unittest.TestCase):
         self.assertEqual({"keep": True}, entity["native"]["future_segment"])
         self.assertEqual({"must_survive": True}, snapshot["native_summary"]["opaque_root"]["future_root"])
 
+    def test_snapshot_prefers_a_vectcut_remote_source_for_rebinding(self) -> None:
+        draft = {
+            "id": "draft-1",
+            "materials": {"videos": [{
+                "id": "mat-1",
+                "path": "E:/JianYing/JianyingPro Drafts/generated/assets/video/cache.mp4",
+                "remote_url": "D:/media/original.mp4",
+            }]},
+            "tracks": [],
+        }
+        with TemporaryDirectory() as directory:
+            draft_dir = Path(directory) / "draft"
+            draft_dir.mkdir()
+            (draft_dir / "draft_content.json").write_text(json.dumps(draft), encoding="utf-8")
+            snapshot = JianyingDraftAdapter(codec=PlainJsonCodec(), editor_version="fixture").snapshot(draft_dir)
+
+        self.assertEqual("D:/media/original.mp4", snapshot["materials"]["mat-1"]["path"])
+
     def test_publish_only_writes_a_clone_and_preserves_unknown_json(self) -> None:
         draft = {
             "id": "draft-1", "materials": {"videos": []}, "future_root": {"keep": True},
@@ -256,10 +274,10 @@ class JianyingAdapterTests(unittest.TestCase):
 
 
 class EditorSyncTests(unittest.TestCase):
-    def _project(self, root: Path):
+    def _project(self, root: Path, *, title: str = "Sync"):
         store = ProjectStore(root)
         project = store.create_project(
-            project_id="sync", title="Sync", canvas={"width": 1920, "height": 1080, "fps": 30}
+            project_id="sync", title=title, canvas={"width": 1920, "height": 1080, "fps": 30}
         )
         project = store.apply_plan(
             project_id="sync", expected_revision=1, actor="agent", reason="base", operations=[
@@ -270,6 +288,27 @@ class EditorSyncTests(unittest.TestCase):
             ],
         )
         return store, project
+
+    def test_publish_derives_a_human_readable_draft_name_by_default(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store, _ = self._project(root, title="太忆空间效果演示｜剪映验收版")
+            adapter = FakeAdapter([external_snapshot()])
+            sync = EditorSync(store=store, sessions=SyncSessionStore(root), adapter=adapter)
+            opened = sync.open(project_id="sync", draft_path="D:/drafts/raw-generated")
+            sync.preview(opened["session_id"])
+            sync.commit(opened["session_id"], resolutions={})
+
+            receipt = sync.publish(
+                opened["session_id"],
+                change_summary="有限说明字幕",
+                release_version=1,
+            )
+
+        self.assertEqual(
+            "D:/drafts/太忆空间效果演示-v1-有限说明字幕",
+            receipt["destination_path"].replace("\\", "/"),
+        )
 
     def test_conflicting_human_timing_can_be_committed_as_a_new_revision(self) -> None:
         with TemporaryDirectory() as directory:

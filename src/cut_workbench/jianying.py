@@ -209,7 +209,12 @@ def _normalize_draft(native: Mapping[str, Any], *, adapter_id: str) -> dict[str,
                     continue
                 materials[item["id"]] = {
                     "external_id": item["id"], "kind": kind,
-                    "path": item.get("path") or item.get("lumi_hub_path"),
+                    # VectCut keeps an editable local proxy under the draft
+                    # folder but records the original asset locator in
+                    # ``remote_url``.  Prefer that stable original for
+                    # Workbench source binding; retain the full native item
+                    # below so Jianying still preserves its proxy path.
+                    "path": item.get("remote_url") or item.get("path") or item.get("lumi_hub_path"),
                     "native": copy.deepcopy(dict(item)),
                     "collection_path": f"/materials/{collection}",
                     "property_paths": {

@@ -135,8 +135,11 @@ class WorkbenchApp:
                 "resolutions": {"type": "object", "additionalProperties": {"enum": ["human", "agent"]}},
             }, ["session_id", "resolutions"]),
             _tool("sync.publish", "Publish merged Agent changes to a new editor draft clone", {
-                "session_id": string, "destination_path": string,
-            }, ["session_id", "destination_path"]),
+                "session_id": string,
+                "destination_path": string,
+                "change_summary": string,
+                "release_version": integer,
+            }, ["session_id"]),
         ]
 
     def call_tool(self, name: str, arguments: Mapping[str, Any]) -> Any:
@@ -172,7 +175,10 @@ class WorkbenchApp:
                 a["session_id"], resolutions=a.get("resolutions", {})
             ),
             "sync.publish": lambda a: self._sync().publish(
-                a["session_id"], destination_path=a["destination_path"]
+                a["session_id"],
+                destination_path=a.get("destination_path"),
+                change_summary=a.get("change_summary"),
+                release_version=a.get("release_version"),
             ),
         }
         if name not in handlers:
