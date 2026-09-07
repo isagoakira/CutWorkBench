@@ -50,6 +50,7 @@ class WorkbenchApp:
     def list_tools(self) -> list[dict[str, Any]]:
         string = {"type": "string"}
         integer = {"type": "integer", "minimum": 1}
+        boolean = {"type": "boolean"}
         obj = {"type": "object"}
         return [
             _tool("project.create", "Create a versioned editable project", {
@@ -139,6 +140,7 @@ class WorkbenchApp:
                 "destination_path": string,
                 "change_summary": string,
                 "release_version": integer,
+                "reopen_editor": boolean,
             }, ["session_id"]),
             _tool("sync.apply", "Apply merged Agent changes to a connected live editor without creating a clone", {
                 "session_id": string,
@@ -182,6 +184,7 @@ class WorkbenchApp:
                 destination_path=a.get("destination_path"),
                 change_summary=a.get("change_summary"),
                 release_version=a.get("release_version"),
+                reopen_editor=a.get("reopen_editor", False),
             ),
             "sync.apply": lambda a: self._sync().apply(a["session_id"]),
         }

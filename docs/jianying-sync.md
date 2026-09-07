@@ -52,3 +52,13 @@ python -m cut_workbench.cli --root <工作台目录> `
 ```
 
 桥接目录由剪映侧宿主维护：`profile.json`、`snapshot.json`、`authorization.json`、`commands/` 与 `responses/`。Cut Workbench 仅写入 `commands/` 并校验 `responses/`；它不把文件协议当成对打开草稿的写入许可。当前安装包未发现可验证的官方剪映扩展入口，因此必须先由受控的剪映侧本地桥接接入后，才可对真实打开时间线启用该适配器。
+
+## 无痛验收切换（当前默认路线）
+
+没有实时宿主桥接时，不要在每次新需求后切换剪映。保持剪映打开，连续将需求写入 Workbench revision；当需要验收时，完成一次 `sync.open → sync.preview → sync.commit` 后保存并关闭剪映，再调用：
+
+```json
+{"session_id":"<已提交会话>","reopen_editor":true}
+```
+
+`sync.publish` 会在剪映退出后生成并注册最新命名副本，再自动启动 `JianyingPro.exe`。它不会主动关闭正在编辑的剪映，也不会猜测未公开的“打开指定草稿”命令行参数；重新启动后人工在草稿库选择最新副本即可。若没有关闭剪映，发布仍会明确拒绝。

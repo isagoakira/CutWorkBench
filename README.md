@@ -229,6 +229,7 @@ sync.open → sync.preview → sync.commit → sync.publish clone
 - `pending_agent` 是正常状态，需要 Agent 完成后通过 `capability.submit` 回填证据。
 - 外部编辑器同步必须先 preview；冲突必须明确选择 `human` 或 `agent`。
 - `sync.publish` 只创建新副本，不覆盖原剪映、`.prproj` 或 `.aep` 工程。省略 `destination_path` 时，默认命名为 `项目名-vN-具体改动`；可传入 `release_version` 与 `change_summary` 明确版本和改动说明。
+- 剪映打开期间可持续把新需求提交为 Workbench revision，并在验收节点一次性关闭剪映后发布最新已提交会话。`sync.publish` 传入 `reopen_editor: true` 会在安全副本注册完成后自动重新拉起剪映；剪映没有公开“打开指定草稿”的启动参数，因此需在草稿库点选最新命名副本。
 - 剪映已打开时，使用独立的 `jianying:live-local` 适配器执行 `sync.open → sync.preview → sync.commit → sync.apply`。它由剪映侧桥接在当前时间线中应用带指纹的白名单补丁，不生成草稿副本，也不会写入正在打开的 `draft_content.json`。桥接尚未连接或回执不匹配时会明确拒绝，不会降级为文件强写。
 - 已绑定的 A/V 片段可保留稳定 ID 地换素材、换轨和重排；换素材会在剪映克隆稿中新增素材记录，只重定向目标片段，原素材仍保留。整条时间线的任意增删重组由本地 VectCut 编译为新可编辑草稿。
 - `handed_off` revision 不可再修改，需要先创建分支。

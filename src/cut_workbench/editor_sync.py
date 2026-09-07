@@ -167,6 +167,7 @@ class EditorSync:
         destination_path: str | None = None,
         change_summary: str | None = None,
         release_version: int | None = None,
+        reopen_editor: bool = False,
     ) -> dict[str, Any]:
         session = self.sessions.read(session_id)
         if session.get("status") != "committed":
@@ -193,7 +194,12 @@ class EditorSync:
                     release_version=release_version,
                 )
             )
+        reopen = getattr(self.adapter, "reopen_published", None)
+        if reopen_editor and not callable(reopen):
+            raise ValidationError(f"editor adapter cannot relaunch a published revision: {self.adapter.adapter_id}")
         receipt = dict(self.adapter.publish(session["draft_path"], destination_path, patches))
+        if reopen_editor:
+            receipt["editor_reopen"] = dict(reopen(destination_path))
         session["status"] = "published"
         session["publish_receipt"] = receipt
         self.sessions.write(session)

@@ -106,11 +106,13 @@ class JianyingDraftAdapter:
         editor_version: str,
         process_checker: Callable[[], bool] | None = None,
         draft_index_path: Path | None = None,
+        editor_launcher: Callable[[Path], None] | None = None,
     ) -> None:
         self.codec = codec
         self.editor_version = editor_version
         self.process_checker = process_checker or _jianying_is_running
         self.draft_index_path = Path(draft_index_path).resolve() if draft_index_path else None
+        self.editor_launcher = editor_launcher or self._launch_editor
 
     def profile(self) -> dict[str, Any]:
         return {
@@ -194,6 +196,35 @@ class JianyingDraftAdapter:
             "registered": registered,
             "index_backup_path": str(index_backup_path) if index_backup_path else None,
         }
+
+    def reopen_published(self, destination_path: str | Path) -> dict[str, Any]:
+        """Launch Jianying after a safe clone has been registered.
+
+        Jianying exposes no documented command-line argument for selecting a
+        particular draft, so this launches the app without guessing a private
+        flag. The user sees the registered clone in the draft library.
+        """
+        destination = Path(destination_path).resolve()
+        if self.process_checker():
+            raise ValidationError("Jianying is running; close it before reopening a published revision")
+        if not destination.is_dir():
+            raise ValidationError(f"published Jianying draft directory not found: {destination}")
+        self.editor_launcher(destination)
+        return {
+            "status": "launched",
+            "destination_path": str(destination),
+            "selection_required": True,
+        }
+
+    def _launch_editor(self, _: Path) -> None:
+        install_dir = self.codec.describe().get("install_dir")
+        executable = Path(str(install_dir)).resolve().parent / "JianyingPro.exe" if install_dir else None
+        if executable is None or not executable.is_file():
+            raise ValidationError("cannot locate JianyingPro.exe for automatic reopen")
+        try:
+            subprocess.Popen([str(executable)], close_fds=True)
+        except OSError as error:
+            raise ValidationError(f"cannot relaunch Jianying: {error}") from error
 
 
 def _normalize_draft(native: Mapping[str, Any], *, adapter_id: str) -> dict[str, Any]:

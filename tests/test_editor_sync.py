@@ -92,6 +92,9 @@ class FakeAdapter:
         self.published.append(receipt)
         return receipt
 
+    def reopen_published(self, destination_path):
+        return {"status": "launched", "destination_path": str(destination_path)}
+
 
 class FakeLiveAdapter(FakeAdapter):
     adapter_id = "jianying:live-local"
@@ -110,6 +113,21 @@ class FakeLiveAdapter(FakeAdapter):
 
 
 class JianyingAdapterTests(unittest.TestCase):
+    def test_reopen_published_delegates_to_the_configured_local_launcher(self) -> None:
+        with TemporaryDirectory() as directory:
+            destination = Path(directory) / "验收版"
+            destination.mkdir()
+            launched = []
+            adapter = JianyingDraftAdapter(
+                codec=PlainJsonCodec(), editor_version="fixture", process_checker=lambda: False,
+                editor_launcher=lambda path: launched.append(Path(path)),
+            )
+
+            receipt = adapter.reopen_published(destination)
+
+        self.assertEqual("launched", receipt["status"])
+        self.assertEqual([destination.resolve()], launched)
+
     def test_codec_rechecks_the_staged_helper_against_the_mandatory_pin(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -325,6 +343,21 @@ class EditorSyncTests(unittest.TestCase):
             "D:/drafts/太忆空间效果演示-v1-有限说明字幕",
             receipt["destination_path"].replace("\\", "/"),
         )
+
+    def test_publish_can_relaunch_the_editor_for_the_newly_registered_revision(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store, _ = self._project(root)
+            adapter = FakeAdapter([external_snapshot()])
+            sync = EditorSync(store=store, sessions=SyncSessionStore(root), adapter=adapter)
+            opened = sync.open(project_id="sync", draft_path="D:/drafts/raw")
+            sync.preview(opened["session_id"])
+            sync.commit(opened["session_id"], resolutions={})
+
+            receipt = sync.publish(opened["session_id"], destination_path="D:/drafts/Sync-v2-验收", reopen_editor=True)
+
+        self.assertEqual("launched", receipt["editor_reopen"]["status"])
+        self.assertEqual("D:/drafts/Sync-v2-验收", receipt["editor_reopen"]["destination_path"])
 
     def test_apply_updates_the_connected_live_editor_without_a_destination_clone(self) -> None:
         with TemporaryDirectory() as directory:
