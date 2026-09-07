@@ -92,6 +92,47 @@ class VectCutCompilerTests(unittest.TestCase):
         with patch("cut_workbench.vectcut.request.urlopen", return_value=Response()):
             result = VectCutHttpTransport().call("create_draft", {"width": 1, "height": 1})
         self.assertEqual({"draft_id": "dfd-real"}, result)
+
+    def test_local_execution_accepts_one_frame_native_timing_quantization(self) -> None:
+        """A saved draft may round a 33-fps source range by less than 1/24 s."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft_id = "rounded-draft"
+            folder = root / "drafts" / draft_id
+            folder.mkdir(parents=True)
+            media = root / "media.mp4"
+            media.write_bytes(b"media")
+            (folder / "draft_content.json").write_text(json.dumps({
+                "tracks": [{"name": "V1", "segments": [{
+                    "target_timerange": {"start": 0, "duration": 124515151},
+                    "source_timerange": {"start": 0, "duration": 124515151},
+                }]}],
+                "materials": {"videos": [{"path": str(media)}], "audios": []},
+            }), encoding="utf-8")
+
+            class RoundedTransport(VectCutHttpTransport):
+                def __init__(self):
+                    super().__init__("http://unused")
+
+                def health(self):
+                    return {"reachable": True}
+
+                def call(self, tool, arguments):
+                    if tool == "create_draft":
+                        return {"draft_id": draft_id}
+                    if tool == "query_draft_status":
+                        return {"status": "completed"}
+                    return {"ok": True}
+
+            app = WorkbenchApp(root, vectcut_transport=RoundedTransport(), vectcut_draft_folder=str(root / "drafts"))
+            app.call_tool("project.create", {"project_id": "rounded", "title": "Rounded", "canvas": {"width": 1, "height": 1, "fps": 30}})
+            app.call_tool("project.apply_plan", {"project_id": "rounded", "expected_revision": 1, "actor": "test", "reason": "add media", "operations": [
+                {"op": "register_source", "source_id": "SRC", "locator": str(media)},
+                {"op": "add_track", "track_id": "V1", "kind": "video", "purpose": "base"},
+                {"op": "add_segment", "segment_id": "SEG", "source_id": "SRC", "track_id": "V1", "source_in": 0, "source_out": 124.527, "timeline_start": 0},
+            ]})
+            result = app.call_tool("vectcut.execute", {"project_id": "rounded"})
+        self.assertEqual(1 / 24, result["receipt"]["timing_tolerance_seconds"])
     def test_compiler_rejects_controls_it_cannot_preserve_instead_of_silently_dropping_them(self) -> None:
         project = {
             "project_id": "unsupported", "revision": 1,

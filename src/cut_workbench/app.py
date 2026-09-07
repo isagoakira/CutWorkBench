@@ -223,25 +223,38 @@ class WorkbenchApp:
             expected = [c for c in plan["calls"] if "stable_id" in c]
             if len(actual) != len(expected):
                 raise RuntimeError(f"VectCut lost entities: expected {len(expected)}, found {len(actual)}")
+            # pyJianYingDraft quantizes imported source ranges to the media's
+            # native frame grid.  A Workbench plan is expressed in seconds, so
+            # the saved draft can legitimately differ by one frame (notably
+            # for 33-fps sources).  Keep the check strict enough to reject a
+            # misplaced item, while accepting that documented representation
+            # rounding instead of rejecting an otherwise editable draft.
+            timing_tolerance = 1 / 24
             for call in expected:
                 args = call["arguments"]
                 tracks = [t for t in content["tracks"] if t.get("name") == args["track_name"]]
                 start = args.get("target_start", args.get("start", 0))
                 duration = (args["end"] - args["start"]) / args.get("speed", 1)
                 matches = [s for t in tracks for s in t.get("segments", [])
-                           if abs(s["target_timerange"].get("start", 0) / 1e6 - start) < 1e-5
-                           and abs(s["target_timerange"]["duration"] / 1e6 - duration) < 1e-5]
+                           if abs(s["target_timerange"].get("start", 0) / 1e6 - start) <= timing_tolerance
+                           and abs(s["target_timerange"]["duration"] / 1e6 - duration) <= timing_tolerance]
                 if len(matches) != 1:
                     raise RuntimeError(f"VectCut timeline mismatch: {call['stable_id']}")
                 if call["tool"] in ("add_video", "add_audio"):
                     source = matches[0].get("source_timerange", {})
-                    if abs(source.get("start", 0) / 1e6 - args["start"]) >= 1e-5:
+                    if abs(source.get("start", 0) / 1e6 - args["start"]) > timing_tolerance:
                         raise RuntimeError(f"VectCut source range mismatch: {call['stable_id']}")
             for kind in ("videos", "audios"):
                 for material in content.get("materials", {}).get(kind, []):
                     if not Path(material.get("path", "")).is_file():
                         raise RuntimeError(f"VectCut saved missing media: {material.get('path')}")
-            receipt.update(draft_id=draft_id, draft_path=str(folder), save_status=status, entity_count=len(actual))
+            receipt.update(
+                draft_id=draft_id,
+                draft_path=str(folder),
+                save_status=status,
+                entity_count=len(actual),
+                timing_tolerance_seconds=timing_tolerance,
+            )
         receipt_dir = self.root / "vectcut-executions"
         receipt_dir.mkdir(parents=True, exist_ok=True)
         receipt_path = receipt_dir / f"{uuid.uuid4().hex}.json"
