@@ -63,6 +63,36 @@ class ProjectStoreTests(unittest.TestCase):
                         }],
                     )
 
+    def test_segment_can_keep_its_stable_identity_when_replaced_and_reordered(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = ProjectStore(Path(directory))
+            project = store.create_project(
+                project_id="replace", title="Replace", canvas={"width": 1, "height": 1, "fps": 1}
+            )
+            project = store.apply_plan(
+                project_id="replace", expected_revision=1, actor="test", reason="setup",
+                operations=[
+                    {"op": "register_source", "source_id": "SRC-A", "locator": "a.mp4"},
+                    {"op": "register_source", "source_id": "SRC-B", "locator": "b.mp4"},
+                    {"op": "add_track", "track_id": "V1", "kind": "video"},
+                    {"op": "add_track", "track_id": "V2", "kind": "video"},
+                    {"op": "add_segment", "segment_id": "SEG-FINAL", "source_id": "SRC-A", "track_id": "V1",
+                     "source_in": 0, "source_out": 5, "timeline_start": 10, "role": "final"},
+                ],
+            )
+            updated = store.apply_plan(
+                project_id="replace", expected_revision=project["revision"], actor="test", reason="choose option",
+                operations=[{"op": "update_segment", "segment_id": "SEG-FINAL", "changes": {
+                    "source_id": "SRC-B", "track_id": "V2", "source_in": 1, "source_out": 4,
+                    "timeline_start": 2, "role": "optional-final",
+                }}],
+            )
+            segment = updated["segments"]["SEG-FINAL"]
+            self.assertEqual("SRC-B", segment["source_id"])
+            self.assertEqual("V2", segment["track_id"])
+            self.assertEqual((1.0, 4.0, 2.0), (segment["source_in"], segment["source_out"], segment["timeline_start"]))
+            self.assertEqual("optional-final", segment["role"])
+
     def test_plan_application_creates_immutable_revision_and_preserves_source_provenance(self) -> None:
         with TemporaryDirectory() as directory:
             store = ProjectStore(Path(directory))
@@ -189,6 +219,37 @@ class ProjectStoreTests(unittest.TestCase):
                         }
                     ],
                 )
+
+    def test_caption_timing_can_move_without_replacing_its_stable_id_and_empty_track_can_be_removed(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = ProjectStore(Path(directory))
+            project = store.create_project(
+                project_id="trim", title="Trim", canvas={"width": 1, "height": 1, "fps": 1}
+            )
+            project = store.apply_plan(
+                project_id="trim", expected_revision=1, actor="test", reason="assemble",
+                operations=[
+                    {"op": "register_source", "source_id": "SRC", "locator": "source.mp4"},
+                    {"op": "add_track", "track_id": "V1", "kind": "video"},
+                    {"op": "add_track", "track_id": "V2-EMPTY", "kind": "video"},
+                    {"op": "add_track", "track_id": "C1", "kind": "caption"},
+                    {"op": "add_segment", "segment_id": "SEG", "source_id": "SRC", "track_id": "V1",
+                     "source_in": 0, "source_out": 4, "timeline_start": 0},
+                    {"op": "add_caption", "caption_id": "CAP", "track_id": "C1", "start": 0, "end": 1,
+                     "text": "chapter"},
+                ],
+            )
+
+            updated = store.apply_plan(
+                project_id="trim", expected_revision=project["revision"], actor="test", reason="tighten cut",
+                operations=[
+                    {"op": "update_caption", "caption_id": "CAP", "changes": {"start": 1, "end": 2}},
+                    {"op": "remove_track", "track_id": "V2-EMPTY"},
+                ],
+            )
+
+        self.assertEqual((1, 2), (updated["captions"]["CAP"]["start"], updated["captions"]["CAP"]["end"]))
+        self.assertNotIn("V2-EMPTY", updated["tracks"])
 
     def test_handoff_freezes_project_and_branch_remains_editable(self) -> None:
         with TemporaryDirectory() as directory:

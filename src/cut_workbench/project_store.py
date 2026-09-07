@@ -178,6 +178,20 @@ class ProjectStore:
         }
 
     @staticmethod
+    def _op_remove_track(project: Project, operation: Operation) -> None:
+        """Remove an empty track so a cut does not accumulate dead lanes."""
+        track_id = _required_id(operation, "track_id")
+        if track_id not in project["tracks"]:
+            raise ValidationError(f"unknown track: {track_id}")
+        if any(segment["track_id"] == track_id for segment in project["segments"].values()):
+            raise ValidationError("cannot remove a track that still has segments")
+        if any(control["track_id"] == track_id for control in project["controls"].values()):
+            raise ValidationError("cannot remove a track that still has controls")
+        if any(caption["track_id"] == track_id for caption in project["captions"].values()):
+            raise ValidationError("cannot remove a track that still has captions")
+        del project["tracks"][track_id]
+
+    @staticmethod
     def _op_add_segment(project: Project, operation: Operation) -> None:
         segment_id = _required_id(operation, "segment_id")
         _ensure_unique(project, segment_id)
@@ -219,11 +233,29 @@ class ProjectStore:
         changes = operation.get("changes")
         if not isinstance(changes, Mapping) or not changes:
             raise ValidationError("update_segment changes must be a non-empty object")
-        allowed = {"source_in", "source_out", "timeline_start", "speed", "transform"}
+        # A segment ID identifies the editorial object, not a particular source
+        # file or lane.  Keeping that identity while changing its source or track
+        # is what makes a replacement/reorder reviewable across revisions.
+        allowed = {
+            "source_id", "track_id", "source_in", "source_out", "timeline_start",
+            "speed", "transform", "role",
+        }
         unknown = set(changes) - allowed
         if unknown:
             raise ValidationError(f"unsupported segment changes: {sorted(unknown)}")
         segment = project["segments"][segment_id]
+        replacement_source = changes.get("source_id", segment["source_id"])
+        replacement_track = changes.get("track_id", segment["track_id"])
+        if replacement_source not in project["sources"]:
+            raise ValidationError(f"unknown source: {replacement_source}")
+        if replacement_track not in project["tracks"]:
+            raise ValidationError(f"unknown track: {replacement_track}")
+        if project["tracks"][replacement_track]["kind"] not in {"video", "audio", "sticker"}:
+            raise ValidationError("source segments may only target video, audio, or sticker tracks")
+        if replacement_track != segment["track_id"] and any(
+            control["target_segment_id"] == segment_id for control in project["controls"].values()
+        ):
+            raise ValidationError("cannot move a segment with attached controls; move its controls first")
         for key, value in changes.items():
             segment[key] = copy.deepcopy(value)
         if segment["source_in"] < 0 or segment["source_out"] <= segment["source_in"]:
@@ -302,6 +334,8 @@ class ProjectStore:
             raise ValidationError(f"{kind} control must live on its target segment track")
         if kind == "effect" and project["tracks"][track_id]["kind"] != "effect":
             raise ValidationError("effect control must live on an effect track")
+        if kind == "privacy_overlay" and project["tracks"][track_id]["kind"] not in {"video", "sticker"}:
+            raise ValidationError("privacy_overlay control must live on a separately selectable video or sticker track")
         editable = bool(operation.get("editable", True))
         baked = bool(operation.get("baked", False))
         if baked or not editable:
@@ -360,6 +394,40 @@ class ProjectStore:
             "visual_scene": operation.get("visual_scene"),
             "intended_gap_after": operation.get("intended_gap_after"),
         }
+
+    @staticmethod
+    def _op_update_caption(project: Project, operation: Operation) -> None:
+        """Keep an existing caption ID when editorial timing moves."""
+        caption_id = _required_id(operation, "caption_id")
+        if caption_id not in project["captions"]:
+            raise ValidationError(f"unknown caption: {caption_id}")
+        changes = operation.get("changes")
+        if not isinstance(changes, Mapping) or not changes:
+            raise ValidationError("update_caption changes must be a non-empty object")
+        allowed = {
+            "track_id", "start", "end", "text", "style", "speech_evidence",
+            "visual_scene", "intended_gap_after",
+        }
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValidationError(f"unsupported caption changes: {sorted(unknown)}")
+        caption = project["captions"][caption_id]
+        candidate = copy.deepcopy(caption)
+        candidate.update(copy.deepcopy(dict(changes)))
+        track_id = candidate["track_id"]
+        if track_id not in project["tracks"] or project["tracks"][track_id]["kind"] != "caption":
+            raise ValidationError("caption must target a caption track")
+        start, end = candidate["start"], candidate["end"]
+        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)) or start < 0 or end <= start:
+            raise ValidationError("caption range must be positive and non-empty")
+        if not isinstance(candidate["text"], str) or not candidate["text"].strip():
+            raise ValidationError("caption text is required")
+        for other_id, other in project["captions"].items():
+            if other_id == caption_id or other["track_id"] != track_id:
+                continue
+            if start < other["end"] and end > other["start"]:
+                raise ValidationError(f"caption overlaps {other['caption_id']}")
+        project["captions"][caption_id] = candidate
 
     @staticmethod
     def _op_record_decision(project: Project, operation: Operation) -> None:

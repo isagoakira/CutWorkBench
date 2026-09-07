@@ -106,11 +106,13 @@ class JianyingDraftAdapter:
         editor_version: str,
         process_checker: Callable[[], bool] | None = None,
         draft_index_path: Path | None = None,
+        editor_launcher: Callable[[Path], None] | None = None,
     ) -> None:
         self.codec = codec
         self.editor_version = editor_version
         self.process_checker = process_checker or _jianying_is_running
         self.draft_index_path = Path(draft_index_path).resolve() if draft_index_path else None
+        self.editor_launcher = editor_launcher or self._launch_editor
 
     def profile(self) -> dict[str, Any]:
         return {
@@ -195,6 +197,35 @@ class JianyingDraftAdapter:
             "index_backup_path": str(index_backup_path) if index_backup_path else None,
         }
 
+    def reopen_published(self, destination_path: str | Path) -> dict[str, Any]:
+        """Launch Jianying after a safe clone has been registered.
+
+        Jianying exposes no documented command-line argument for selecting a
+        particular draft, so this launches the app without guessing a private
+        flag. The user sees the registered clone in the draft library.
+        """
+        destination = Path(destination_path).resolve()
+        if self.process_checker():
+            raise ValidationError("Jianying is running; close it before reopening a published revision")
+        if not destination.is_dir():
+            raise ValidationError(f"published Jianying draft directory not found: {destination}")
+        self.editor_launcher(destination)
+        return {
+            "status": "launched",
+            "destination_path": str(destination),
+            "selection_required": True,
+        }
+
+    def _launch_editor(self, _: Path) -> None:
+        install_dir = self.codec.describe().get("install_dir")
+        executable = Path(str(install_dir)).resolve().parent / "JianyingPro.exe" if install_dir else None
+        if executable is None or not executable.is_file():
+            raise ValidationError("cannot locate JianyingPro.exe for automatic reopen")
+        try:
+            subprocess.Popen([str(executable)], close_fds=True)
+        except OSError as error:
+            raise ValidationError(f"cannot relaunch Jianying: {error}") from error
+
 
 def _normalize_draft(native: Mapping[str, Any], *, adapter_id: str) -> dict[str, Any]:
     materials: dict[str, Any] = {}
@@ -204,13 +235,24 @@ def _normalize_draft(native: Mapping[str, Any], *, adapter_id: str) -> dict[str,
             if not isinstance(values, list):
                 continue
             kind = _material_kind(collection)
-            for item in values:
+            for material_index, item in enumerate(values):
                 if not isinstance(item, Mapping) or not isinstance(item.get("id"), str):
                     continue
                 materials[item["id"]] = {
                     "external_id": item["id"], "kind": kind,
-                    "path": item.get("path") or item.get("lumi_hub_path"),
+                    # VectCut keeps an editable local proxy under the draft
+                    # folder but records the original asset locator in
+                    # ``remote_url``.  Prefer that stable original for
+                    # Workbench source binding; retain the full native item
+                    # below so Jianying still preserves its proxy path.
+                    "path": item.get("remote_url") or item.get("path") or item.get("lumi_hub_path"),
                     "native": copy.deepcopy(dict(item)),
+                    "collection_path": f"/materials/{collection}",
+                    "property_paths": {
+                        "path": f"/materials/{collection}/{material_index}/path",
+                        "duration": f"/materials/{collection}/{material_index}/duration",
+                        "material_name": f"/materials/{collection}/{material_index}/material_name",
+                    },
                 }
 
     tracks: dict[str, Any] = {}
@@ -243,6 +285,8 @@ def _normalize_draft(native: Mapping[str, Any], *, adapter_id: str) -> dict[str,
                 "speed": float(segment.get("speed", 1.0)),
                 "transform": copy.deepcopy(clip.get("transform", {})),
             }
+            material = materials.get(segment.get("material_id"), {})
+            properties["source_locator"] = material.get("path")
             prefix = f"/tracks/{track_index}/segments/{segment_index}"
             entities[segment_id] = {
                 "external_id": segment_id,
@@ -257,6 +301,7 @@ def _normalize_draft(native: Mapping[str, Any], *, adapter_id: str) -> dict[str,
                     "source_duration": f"{prefix}/source_timerange/duration",
                     "speed": f"{prefix}/speed",
                     "transform": f"{prefix}/clip/transform",
+                    "material_id": f"{prefix}/material_id",
                 },
                 "entity_path": prefix,
                 "native": copy.deepcopy(dict(segment)),

@@ -32,7 +32,7 @@ class McpSurfaceTests(unittest.TestCase):
             sync = EditorSync(store=ProjectStore(root), sessions=SyncSessionStore(root), adapter=Adapter())
             app = WorkbenchApp(root, editor_sync=sync)
             names = {tool["name"] for tool in app.list_tools()}
-            self.assertTrue({"sync.open", "sync.preview", "sync.commit", "sync.publish"} <= names)
+            self.assertTrue({"sync.open", "sync.preview", "sync.commit", "sync.publish", "sync.apply"} <= names)
     def test_agent_neutral_tool_surface_creates_and_mutates_projects(self) -> None:
         with TemporaryDirectory() as directory:
             app = WorkbenchApp(Path(directory))
@@ -43,6 +43,7 @@ class McpSurfaceTests(unittest.TestCase):
             self.assertIn("vectcut.compile", names)
             self.assertIn("tapnow.context.compile", names)
             self.assertTrue({"tapnow.assets.stage", "tapnow.web.handoff", "tapnow.canvas.reconcile"} <= names)
+            self.assertTrue({"vectcut.health", "vectcut.execute"} <= names)
             self.assertTrue({
                 "generation.contract", "generation.request", "generation.pending",
                 "generation.reconciliation",

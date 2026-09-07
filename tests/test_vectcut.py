@@ -7,11 +7,77 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from cut_workbench.project_store import ProjectStore
-from cut_workbench.vectcut import VectCutCompiler, VectCutExecutor, VectCutHttpTransport
+from cut_workbench.app import WorkbenchApp
+from cut_workbench.config import load_vectcut_config
+from cut_workbench.vectcut import VectCutCompiler, VectCutExecutor, VectCutHttpTransport, default_vectcut_draft_folder
 from cut_workbench.errors import ValidationError
 
 
 class VectCutCompilerTests(unittest.TestCase):
+    def test_health_rejects_unrelated_http_service(self):
+        from unittest.mock import MagicMock
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b'{"status":"ok"}'
+        response.status = 200
+        with patch("cut_workbench.vectcut.request.urlopen", return_value=response):
+            self.assertFalse(VectCutHttpTransport().health()["reachable"])
+
+    def test_save_refuses_existing_destination(self):
+        with TemporaryDirectory() as directory:
+            (Path(directory) / "existing").mkdir()
+            with self.assertRaisesRegex(ValidationError, "overwrite"):
+                VectCutHttpTransport().call("save_draft", {"draft_id": "existing", "draft_folder": directory})
+
+    def test_transport_rejects_nested_save_failure(self):
+        from unittest.mock import MagicMock
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b'{"success":true,"output":{"success":false,"error":"save failed"}}'
+        with patch("cut_workbench.vectcut.request.urlopen", return_value=response):
+            with self.assertRaisesRegex(ValidationError, "save failed"):
+                VectCutHttpTransport().call("save_draft", {"draft_id": "d"})
+
+    def test_runtime_config_defaults_and_overrides_local_vectcut(self) -> None:
+        self.assertEqual("http://127.0.0.1:9001", load_vectcut_config(None)["base_url"])
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "runtime.json"
+            path.write_text(json.dumps({"vectcut": {
+                "base_url": "http://localhost:9100", "timeout": 30, "draft_folder": "/tmp/drafts"
+            }}), encoding="utf-8")
+            self.assertEqual(
+                {"base_url": "http://localhost:9100", "timeout": 30.0, "draft_folder": "/tmp/drafts"},
+                load_vectcut_config(path),
+            )
+
+    def test_default_draft_roots_are_platform_specific(self) -> None:
+        self.assertEqual(
+            Path("/Users/test/Movies/JianyingPro/User Data/Projects/com.lveditor.draft"),
+            default_vectcut_draft_folder("Darwin", Path("/Users/test")),
+        )
+        with patch.dict("os.environ", {"LOCALAPPDATA": "C:/Users/test/AppData/Local"}):
+            self.assertEqual(
+                Path("C:/Users/test/AppData/Local/JianyingPro/User Data/Projects/com.lveditor.draft"),
+                default_vectcut_draft_folder("Windows", Path("C:/Users/test")),
+            )
+
+    def test_app_executes_compiled_plan_through_local_transport(self) -> None:
+        class FakeTransport:
+            def call(self, tool, arguments):
+                return {"draft_id": "local-draft"} if tool == "create_draft" else {"ok": True}
+
+        with TemporaryDirectory() as directory:
+            app = WorkbenchApp(Path(directory), vectcut_transport=FakeTransport(), vectcut_draft_folder="/tmp/drafts")
+            app.call_tool("project.create", {"project_id": "local", "title": "Local", "canvas": {"width": 1, "height": 1, "fps": 30}})
+            app.call_tool("project.apply_plan", {"project_id": "local", "expected_revision": 1, "actor": "test", "reason": "add media", "operations": [
+                {"op": "register_source", "source_id": "SRC", "locator": "file:///tmp/test.mp4"},
+                {"op": "add_track", "track_id": "V1", "kind": "video", "purpose": "base"},
+                {"op": "add_segment", "segment_id": "SEG", "source_id": "SRC", "track_id": "V1", "source_in": 0, "source_out": 1, "timeline_start": 0},
+            ]})
+            result = app.call_tool("vectcut.execute", {"project_id": "local"})
+        self.assertEqual("completed", result["status"])
+        self.assertEqual("/tmp/drafts", result["draft_folder"])
+
     def test_http_transport_unwraps_vectcut_output_envelope(self) -> None:
         class Response:
             def __enter__(self):
@@ -26,6 +92,47 @@ class VectCutCompilerTests(unittest.TestCase):
         with patch("cut_workbench.vectcut.request.urlopen", return_value=Response()):
             result = VectCutHttpTransport().call("create_draft", {"width": 1, "height": 1})
         self.assertEqual({"draft_id": "dfd-real"}, result)
+
+    def test_local_execution_accepts_one_frame_native_timing_quantization(self) -> None:
+        """A saved draft may round a 33-fps source range by less than 1/24 s."""
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft_id = "rounded-draft"
+            folder = root / "drafts" / draft_id
+            folder.mkdir(parents=True)
+            media = root / "media.mp4"
+            media.write_bytes(b"media")
+            (folder / "draft_content.json").write_text(json.dumps({
+                "tracks": [{"name": "V1", "segments": [{
+                    "target_timerange": {"start": 0, "duration": 124515151},
+                    "source_timerange": {"start": 0, "duration": 124515151},
+                }]}],
+                "materials": {"videos": [{"path": str(media)}], "audios": []},
+            }), encoding="utf-8")
+
+            class RoundedTransport(VectCutHttpTransport):
+                def __init__(self):
+                    super().__init__("http://unused")
+
+                def health(self):
+                    return {"reachable": True}
+
+                def call(self, tool, arguments):
+                    if tool == "create_draft":
+                        return {"draft_id": draft_id}
+                    if tool == "query_draft_status":
+                        return {"status": "completed"}
+                    return {"ok": True}
+
+            app = WorkbenchApp(root, vectcut_transport=RoundedTransport(), vectcut_draft_folder=str(root / "drafts"))
+            app.call_tool("project.create", {"project_id": "rounded", "title": "Rounded", "canvas": {"width": 1, "height": 1, "fps": 30}})
+            app.call_tool("project.apply_plan", {"project_id": "rounded", "expected_revision": 1, "actor": "test", "reason": "add media", "operations": [
+                {"op": "register_source", "source_id": "SRC", "locator": str(media)},
+                {"op": "add_track", "track_id": "V1", "kind": "video", "purpose": "base"},
+                {"op": "add_segment", "segment_id": "SEG", "source_id": "SRC", "track_id": "V1", "source_in": 0, "source_out": 124.527, "timeline_start": 0},
+            ]})
+            result = app.call_tool("vectcut.execute", {"project_id": "rounded"})
+        self.assertEqual(1 / 24, result["receipt"]["timing_tolerance_seconds"])
     def test_compiler_rejects_controls_it_cannot_preserve_instead_of_silently_dropping_them(self) -> None:
         project = {
             "project_id": "unsupported", "revision": 1,
@@ -127,6 +234,152 @@ class VectCutCompilerTests(unittest.TestCase):
             self.assertEqual("CAP-001", caption["stable_id"])
             self.assertEqual("vect-r000002", plan["draft_id"])
             self.assertEqual("save_draft", plan["calls"][-1]["tool"])
+
+    def test_compiler_places_privacy_overlay_on_a_separate_editable_image_track(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = ProjectStore(Path(directory))
+            project = store.create_project(
+                project_id="privacy-overlay",
+                title="Privacy overlay",
+                canvas={"width": 1920, "height": 1080, "fps": 30},
+                editor_adapter="vectcut",
+            )
+            project = store.apply_plan(
+                project_id="privacy-overlay",
+                expected_revision=1,
+                actor="agent:test",
+                reason="add a separately selectable privacy overlay",
+                operations=[
+                    {"op": "register_source", "source_id": "SRC-001", "locator": "D:/media/main.mp4"},
+                    {"op": "add_track", "track_id": "V1-BASE", "kind": "video", "purpose": "base"},
+                    {"op": "add_track", "track_id": "V2-PRIVACY", "kind": "sticker", "purpose": "minimal privacy overlay"},
+                    {
+                        "op": "add_segment",
+                        "segment_id": "SEG-SRC001-001",
+                        "source_id": "SRC-001",
+                        "track_id": "V1-BASE",
+                        "source_in": 0,
+                        "source_out": 4,
+                        "timeline_start": 0,
+                    },
+                    {
+                        "op": "add_control",
+                        "control_id": "CTL-SEG-SRC001-001-PRIV-01",
+                        "target_segment_id": "SEG-SRC001-001",
+                        "track_id": "V2-PRIVACY",
+                        "kind": "privacy_overlay",
+                        "active_range": {"start": 0.5, "end": 3.5},
+                        "properties": {
+                            "asset_path": "D:/controls/privacy-overlay.png",
+                            "relative_index": 12,
+                            "geometry": {"x": 110, "y": 42, "width": 560, "height": 42},
+                        },
+                    },
+                ],
+            )
+
+            plan = VectCutCompiler().compile(project)
+            overlay = next(call for call in plan["calls"] if call.get("stable_id") == "CTL-SEG-SRC001-001-PRIV-01")
+
+        self.assertEqual("add_image", overlay["tool"])
+        self.assertEqual("D:/controls/privacy-overlay.png", overlay["arguments"]["image_url"])
+        self.assertEqual("V2-PRIVACY__L01", overlay["arguments"]["track_name"])
+        self.assertEqual(0.5, overlay["arguments"]["start"])
+        self.assertEqual(3.5, overlay["arguments"]["end"])
+
+    def test_compiler_reuses_privacy_lanes_when_intervals_do_not_overlap(self) -> None:
+        project = {
+            "project_id": "privacy-pool", "revision": 1,
+            "canvas": {"width": 1920, "height": 1080},
+            "sources": {"SRC": {"locator": "D:/media/main.mp4", "media_profile": {}}},
+            "tracks": {
+                "V1": {"track_id": "V1", "kind": "video", "purpose": "base"},
+                "V2": {"track_id": "V2", "kind": "video", "purpose": "privacy"},
+            },
+            "segments": {
+                "SEG": {
+                    "segment_id": "SEG", "source_id": "SRC", "track_id": "V1",
+                    "source_in": 0, "source_out": 6, "timeline_start": 0, "speed": 1, "transform": {},
+                }
+            },
+            "captions": {},
+            "controls": {
+                "CTL-A": {"control_id": "CTL-A", "kind": "privacy_overlay", "enabled": True,
+                          "target_segment_id": "SEG", "track_id": "V2", "active_range": {"start": 0, "end": 3},
+                          "properties": {"asset_path": "D:/controls/a.png"}},
+                "CTL-B": {"control_id": "CTL-B", "kind": "privacy_overlay", "enabled": True,
+                          "target_segment_id": "SEG", "track_id": "V2", "active_range": {"start": 1, "end": 2},
+                          "properties": {"asset_path": "D:/controls/b.png"}},
+                "CTL-C": {"control_id": "CTL-C", "kind": "privacy_overlay", "enabled": True,
+                          "target_segment_id": "SEG", "track_id": "V2", "active_range": {"start": 3, "end": 5},
+                          "properties": {"asset_path": "D:/controls/c.png"}},
+            },
+        }
+
+        plan = VectCutCompiler().compile(project)
+        lanes = {
+            call["stable_id"]: call["arguments"]["track_name"]
+            for call in plan["calls"] if call["tool"] == "add_image"
+        }
+
+        self.assertEqual({"CTL-A": "V2__L01", "CTL-B": "V2__L02", "CTL-C": "V2__L01"}, lanes)
+
+    def test_compiler_mutes_sources_marked_as_silent_demonstrations(self) -> None:
+        project = {
+            "project_id": "silent", "revision": 1,
+            "canvas": {"width": 1920, "height": 1080},
+            "sources": {
+                "SRC-001": {
+                    "source_id": "SRC-001",
+                    "locator": "D:/media/silent-demo.mp4",
+                    "media_profile": {"audio_policy": "mute"},
+                }
+            },
+            "tracks": {"V1": {"track_id": "V1", "kind": "video", "purpose": "base"}},
+            "segments": {
+                "SEG-001": {
+                    "segment_id": "SEG-001", "source_id": "SRC-001", "track_id": "V1",
+                    "source_in": 0, "source_out": 1, "timeline_start": 0, "speed": 1,
+                    "transform": {},
+                }
+            },
+            "captions": {},
+            "controls": {},
+        }
+
+        plan = VectCutCompiler().compile(project)
+        video = next(call for call in plan["calls"] if call["tool"] == "add_video")
+
+        self.assertEqual(0.0, video["arguments"]["volume"])
+
+    def test_compiler_quantizes_repeating_speed_timing_without_a_micro_overlap(self) -> None:
+        project = {
+            "project_id": "micro-timing", "revision": 1,
+            "canvas": {"width": 1920, "height": 1080},
+            "sources": {"SRC": {"locator": "D:/media/source.mp4", "media_profile": {}}},
+            "tracks": {"V1": {"track_id": "V1", "kind": "video", "purpose": "base"}},
+            "segments": {
+                "SEG-A": {
+                    "segment_id": "SEG-A", "source_id": "SRC", "track_id": "V1",
+                    "source_in": 0, "source_out": 2.3, "timeline_start": 0, "speed": 0.75,
+                    "transform": {},
+                },
+                # The exact mathematical end of SEG-A is 3.066666..., while
+                # the editor represents its duration as 3,066,667 microseconds.
+                "SEG-B": {
+                    "segment_id": "SEG-B", "source_id": "SRC", "track_id": "V1",
+                    "source_in": 3, "source_out": 4, "timeline_start": 3.066666, "speed": 1,
+                    "transform": {},
+                },
+            },
+            "captions": {}, "controls": {},
+        }
+
+        plan = VectCutCompiler().compile(project)
+        calls = [call for call in plan["calls"] if call["tool"] == "add_video"]
+
+        self.assertEqual(0.0, calls[0]["arguments"]["target_start"])
+        self.assertEqual(3.066667, calls[1]["arguments"]["target_start"])
 
     def test_executor_resolves_draft_reference_without_coupling_compiler_to_transport(self) -> None:
         class FakeTransport:

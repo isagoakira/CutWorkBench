@@ -2,7 +2,7 @@
 
 本地优先、Agent 中立、以可编辑工程为核心的视频剪辑控制层。
 
-Cut Workbench 不试图再造一个非线性编辑器。它负责管理剪辑工程的版本、稳定 ID、证据、冲突、验证和交接，再通过 MCP 把 Codex、Claude 或其他 Agent 接到本地分析工具、剪映、Premiere Pro、After Effects 以及可选的 VectCutAPI。
+Cut Workbench 不试图再造一个非线性编辑器。它负责管理剪辑工程的版本、稳定 ID、证据、冲突、验证和交接，再通过 MCP 把 Codex、Claude 或其他 Agent 接到本地分析工具、剪映、Premiere Pro、After Effects 和本地 VectCutAPI。
 
 核心目标只有一个：**自动化完成后，人工仍能回到轨道、片段、字幕、效果和原生工程中继续修改。**
 
@@ -25,8 +25,9 @@ Cut Workbench 不试图再造一个非线性编辑器。它负责管理剪辑工
 | 可分离片段、Transform、Mask、Keyframe、Effect 控件 | 可用 |
 | 本地/Agent capability 路由与持久化任务队列 | 可用 |
 | Cut Protocol 结构验证、视觉证据门禁、Manifest | 可用 |
-| VectCut 可编辑多轨调用计划 | 可用；执行需要单独运行本地 VectCutAPI |
+| 本地 VectCut 可编辑多轨草稿生成 | 默认启用；`vectcut.execute` 连接本机 `127.0.0.1:9001`，服务未启动则明确失败 |
 | 剪映专业版 11.3 双向三方同步 | 可用；需要外部 codec sidecar |
+| 已打开剪映的增量应用 | 可用桥接协议与 `sync.apply`；需接入受控的剪映侧本地桥接 |
 | Premiere Pro 2023 CEP 桥接 | 可用；当前 typed 写入范围为素材入点/出点 |
 | After Effects 2023 CEP 桥接 | 快照和 opaque 保留可用；typed layer 合并尚未完成 |
 | Dynamic Link 结构化双向编辑 | 尚未完成，目前仅作为 opaque 原生关联保留 |
@@ -48,10 +49,10 @@ Codex / Claude / 其他 Agent
       │      │          ├─ Premiere CEP
       │      ├─ local   └─ After Effects CEP
       │      └─ agent
-      └─ VectCut compile plan
+      └─ VectCut compile + local execution
 ```
 
-Workbench revision 是唯一真相源。外部编辑器是协作者，VectCut 是编译目标，渲染文件不是可编辑工程的替代品。
+Workbench revision 是唯一真相源。外部编辑器是协作者；VectCut 是默认的本地可编辑草稿生成目标，渲染文件不是可编辑工程的替代品。
 
 ## 环境要求
 
@@ -82,6 +83,35 @@ cut-workbench --root D:/cut-runtime list-tools
 ```powershell
 $env:PYTHONPATH = 'src'
 python -m cut_workbench.cli --root D:/cut-runtime list-tools
+```
+
+## 配置决议与调用链
+
+`runtime-config.json` 是一个合并配置：同一文件可同时声明本地 capability provider、routing policy 和本机 VectCutAPI。它不是三个互相覆盖的配置文件。最小的 VectCut 配置如下；即使文件里只有 `vectcut`，Workbench 仍会保留默认 `ffprobe` provider。
+
+```json
+{
+  "vectcut": {
+    "base_url": "http://127.0.0.1:9001",
+    "timeout": 120,
+    "draft_folder": "E:/JianYing/JianyingPro Drafts"
+  }
+}
+```
+
+配置文件的选择顺序是：显式 `--config <path>` → `<root>/runtime-config.json`（仅在未传 `--config` 时自动加载）→ 内置默认值。选定文件内，VectCut 地址的优先级为 `--vectcut-url` → `vectcut.base_url` → `CUT_WORKBENCH_VECTCUT_URL` → `http://127.0.0.1:9001`；草稿目录的优先级为 `--vectcut-draft-folder` → `vectcut.draft_folder` → 平台默认的剪映草稿根目录。`--config` 不会合并另一份文件。
+
+VectCut 地址必须是 `localhost`、`127.0.0.1` 或 `::1` 等本机回环 HTTP(S) 服务；该限制保证 `vectcut.execute` 不会悄悄切换到云端。完整字段、配置样例与故障定位见 [运行时配置](docs/runtime-configuration.md)。
+
+```text
+--config / <root>/runtime-config.json
+              │
+              ├─ providers + routing ──→ capability.request
+Agent / CLI ──┼─ vectcut endpoint ─────→ vectcut.health → compile → execute → 新剪映草稿
+  stdio MCP   │
+              └─ editor settings ──────→ sync.open → preview → commit → publish / apply
+                       │
+                 project.inspect → project.apply_plan → verify → manifest
 ```
 
 ## 本地部署
@@ -122,9 +152,70 @@ cut-workbench --root D:/cut-runtime mcp
 | 剪映专业版 | 可选 | 额外提供本机 codec sidecar，并固定 codec 版本与 SHA-256。 |
 | Premiere Pro / After Effects | 可选 | 安装仓库提供的 CEP 面板和本机文件桥；先做快照/preview，再允许克隆发布。 |
 | TapNow | 可选 | 将已锁定的脚本、分镜和素材计划编译为 Canvas 节点、Ask-mode 执行简报和网页端交接包；由 TapNow Agent 在网页内执行，不调用未公开接口。 |
-| VectCutAPI | 可选 | 单独启动本地 VectCutAPI；Workbench 仅编译并审计多轨调用计划。 |
+| VectCutAPI | 必需（自动建稿） | 本地启动于 `127.0.0.1:9001`；Workbench 默认编译并执行可编辑草稿写入。 |
 
-推荐部署顺序是：**核心 MCP → FFmpeg → Whisper/TTS → 剪映 → Premiere/AE → TapNow 或 VectCutAPI**。每一层都可以单独验证，缺少某个可选组件不会阻塞核心工程、审计和 MCP 工作流。
+推荐部署顺序是：**核心 MCP → 本地 VectCutAPI → 剪映 → FFmpeg → Whisper/TTS → Premiere/AE → TapNow**。缺少 VectCutAPI 时工程审计仍可用，但自动创建可编辑剪映草稿会被 `vectcut.execute` 明确阻止。
+
+### 本地 VectCutAPI（默认自动建稿通道）
+
+Cut Workbench 默认使用 `http://127.0.0.1:9001`，只接受本机回环地址，不会调用 `open.vectcut.com`，也不要求 `VECTCUT_API_KEY`。先在与剪映同一台机器上部署开源 VectCutAPI：
+
+```powershell
+git clone https://github.com/sun-guannan/VectCutAPI.git D:/tools/VectCutAPI
+Set-Location D:/tools/VectCutAPI
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python D:/projects/CutWorkBench/scripts/serve_vectcut.py --repo D:/tools/VectCutAPI
+```
+
+macOS 使用同一仓库和 Python 环境；先安装剪映专业版，再启动服务：
+
+```bash
+git clone https://github.com/sun-guannan/VectCutAPI.git ~/tools/VectCutAPI
+cd ~/tools/VectCutAPI
+python3 -m venv .venv && source .venv/bin/activate
+python -m pip install -r requirements.txt
+python /path/to/CutWorkBench/scripts/serve_vectcut.py --repo ~/tools/VectCutAPI
+```
+
+启动前，在 VectCutAPI 仓库根目录创建 `config.json`（上游默认是国际版和 9000，不能直接沿用）：
+
+```json
+{"draft_profile":"jianying_pro_10","is_capcut_env":false,"port":9001,"is_upload_draft":false,"draft_domain":"http://127.0.0.1:9001"}
+```
+
+`serve_vectcut.py` 在 Windows/macOS/Linux 都绑定本机回环地址，端口默认 9001。依赖 FFmpeg 的 `ffprobe`，必须加入服务进程的 PATH。上游模板是剪映 10.x 模板；生成成功与本机剪映版本能打开是两项验收，macOS 编辑器需在真机验收，WSL 只能证明 Linux 服务执行链。
+
+配置草稿根目录，避免在多磁盘或自定义安装路径下写到错误位置。Windows 和 macOS 的默认候选值分别为 `%LOCALAPPDATA%/JianyingPro/User Data/Projects/com.lveditor.draft` 与 `~/Movies/JianyingPro/User Data/Projects/com.lveditor.draft`；若剪映实际草稿目录不同，必须覆盖它：
+
+```json
+{
+  "vectcut": {
+    "base_url": "http://127.0.0.1:9001",
+    "timeout": 120,
+    "draft_folder": "E:/JianYing/JianyingPro Drafts"
+  }
+}
+```
+
+保存为运行目录 `--root` 下的 `runtime-config.json` 后会自动加载；也可用 `--config` 显式指定其他文件。该文件可以同时放入 `providers` 和 `routing`，完整格式见 [运行时配置](docs/runtime-configuration.md)：
+
+```powershell
+cut-workbench --root D:/cut-runtime --config D:/cut-config/runtime-config.json call vectcut.health '{}'
+```
+
+通过健康检查后，调用 `vectcut.execute`。它先从指定 revision 编译计划，再依次创建草稿、写入素材/轨道/字幕/效果、保存到新的草稿；拒绝覆盖已有草稿。保存后检查任务状态、实际文件、实体数量、时间线位置和素材文件。计划和回执写入运行目录 `vectcut-executions/`。
+
+```powershell
+cut-workbench --root D:/cut-runtime --config D:/cut-config/runtime-config.json call vectcut.execute '{"project_id":"demo","revision":2}'
+```
+
+真实媒体冒烟测试（素材至少 6 秒；生成两段带入点的剪辑，并验证素材 SHA-256）：
+
+```bash
+PYTHONPATH=src python scripts/smoke_vectcut.py --source /path/to/video.mov --root /path/to/smoke-runtime
+```
 
 ## 接入 Agent
 
@@ -143,7 +234,7 @@ cut-workbench --root D:/cut-runtime mcp
 }
 ```
 
-如果需要本地 Whisper、镜头检测或自定义 TTS sidecar，在启动参数中增加 `--config D:/cut-config/runtime-config.json`。配置结构见 [examples/runtime-config.json](examples/runtime-config.json)。任何实现“一条 JSON 请求从 stdin 输入、一条 JSON 结果从 stdout 输出”的程序都能作为 `json-command` provider，不需要修改 Workbench 核心。
+如果需要本地 Whisper、镜头检测或自定义 TTS sidecar，在启动参数中增加 `--config D:/cut-config/runtime-config.json`。配置结构见 [运行时配置](docs/runtime-configuration.md) 和 [examples/runtime-config.json](examples/runtime-config.json)。任何实现“一条 JSON 请求从 stdin 输入、一条 JSON 结果从 stdout 输出”的程序都能作为 `json-command` provider，不需要修改 Workbench 核心。
 
 ## 核心工作流
 
@@ -156,7 +247,8 @@ project.inspect → project.apply_plan → new revision
       ↓
 project.verify → project.manifest
       ↓
-sync.open → sync.preview → sync.commit → sync.publish clone
+├─ vectcut.health → vectcut.compile → vectcut.execute（新可编辑草稿）
+└─ sync.open → sync.preview → sync.commit → sync.publish clone / sync.apply live
 ```
 
 关键规则：
@@ -166,7 +258,10 @@ sync.open → sync.preview → sync.commit → sync.publish clone
 - 效果、字幕、处理副本和音频尽量保持独立轨道或独立控件。
 - `pending_agent` 是正常状态，需要 Agent 完成后通过 `capability.submit` 回填证据。
 - 外部编辑器同步必须先 preview；冲突必须明确选择 `human` 或 `agent`。
-- `sync.publish` 只创建新副本，不覆盖原剪映、`.prproj` 或 `.aep` 工程。
+- `sync.publish` 只创建新副本，不覆盖原剪映、`.prproj` 或 `.aep` 工程。省略 `destination_path` 时，默认命名为 `项目名-vN-具体改动`；可传入 `release_version` 与 `change_summary` 明确版本和改动说明。
+- 剪映打开期间可持续把新需求提交为 Workbench revision，并在验收节点一次性关闭剪映后发布最新已提交会话。`sync.publish` 传入 `reopen_editor: true` 会在安全副本注册完成后自动重新拉起剪映；剪映没有公开“打开指定草稿”的启动参数，因此需在草稿库点选最新命名副本。
+- 剪映已打开时，使用独立的 `jianying:live-local` 适配器执行 `sync.open → sync.preview → sync.commit → sync.apply`。它由剪映侧桥接在当前时间线中应用带指纹的白名单补丁，不生成草稿副本，也不会写入正在打开的 `draft_content.json`。桥接尚未连接或回执不匹配时会明确拒绝，不会降级为文件强写。
+- 已绑定的 A/V 片段可保留稳定 ID 地换素材、换轨和重排；换素材会在剪映克隆稿中新增素材记录，只重定向目标片段，原素材仍保留。整条时间线的任意增删重组由本地 VectCut 编译为新可编辑草稿。
 - `handed_off` revision 不可再修改，需要先创建分支。
 
 ## MCP 工具
@@ -175,9 +270,11 @@ sync.open → sync.preview → sync.commit → sync.publish clone
 | --- | --- |
 | 工程 | `project.create`、`project.inspect`、`project.apply_plan`、`project.branch` |
 | 验证 | `project.verify`、`project.manifest` |
+| 生产工作流 | `workflow.contract`、`workflow.status` |
 | 能力 | `capability.request`、`capability.pending`、`capability.submit` |
-| 编译 | `vectcut.compile` |
-| 外部编辑器 | `sync.open`、`sync.preview`、`sync.commit`、`sync.publish` |
+| 生成编排 | `generation.contract`、`generation.request`、`generation.pending`、`generation.reconciliation`、`generation.claim`、`generation.heartbeat`、`generation.approve`、`generation.authorize`、`generation.submit` |
+| 本地 VectCut | `vectcut.health`、`vectcut.compile`、`vectcut.execute` |
+| 外部编辑器 | `sync.open`、`sync.preview`、`sync.commit`、`sync.publish`、`sync.apply` |
 | TapNow 上下文工程 | `tapnow.context.compile`、`tapnow.assets.stage`、`tapnow.web.handoff`、`tapnow.canvas.reconcile` |
 
 用 `cut-workbench --root D:/cut-runtime list-tools` 可获取完整 JSON Schema。
@@ -275,7 +372,7 @@ cut-workbench --root D:/cut-runtime `
 
 ### 剪映
 
-剪映适配器执行基线 A、当前 Workbench B、当前人工草稿 C 的三方合并。未知字幕、贴纸、效果和复合片段作为 opaque 外部实体保存，不会静默丢失。详见 [docs/jianying-sync.md](docs/jianying-sync.md)。
+剪映适配器执行基线 A、当前 Workbench B、当前人工草稿 C 的三方合并。未知字幕、贴纸、效果和复合片段作为 opaque 外部实体保存，不会静默丢失。关闭剪映后的文件适配器只发布安全副本；已打开剪映的增量改动通过 `jianying:live-local` 桥接和 `sync.apply` 执行。详见 [docs/jianying-sync.md](docs/jianying-sync.md)。
 
 ### Premiere Pro / After Effects
 
@@ -298,6 +395,7 @@ cut-workbench --root D:/cut-runtime `
 - [剪映双向同步](docs/jianying-sync.md)
 - [TapNow 上下文工程](docs/tapnow-context-engineering.md)
 - [Premiere / After Effects 本机桥接](docs/adobe-local-bridge.md)
+- [运行时配置与调用链](docs/runtime-configuration.md)
 - [PR / AE 开源方案调研](docs/premiere-after-effects-open-source-research.md)
 - [运行时配置示例](examples/runtime-config.json)
 - [编辑计划示例](examples/edit-plan.json)
@@ -313,7 +411,7 @@ python -m compileall -q src
 ## 当前限制
 
 - 这是控制平面，不提供时间线 GUI、播放器或渲染器。
-- VectCut MCP 工具当前只生成调用计划；执行需要单独的 transport/API。
+- 本地 VectCutAPI 是自动建稿的必需 sidecar；服务未启动时 `vectcut.execute` 会失败，不会降级到云端或手动导入。
 - 剪映 codec 不在仓库中，必须由操作者提供并固定 SHA-256。
 - Premiere CEP typed writer 目前只覆盖明确暴露的素材入/出点。
 - AE layer、Dynamic Link、Premiere 速度/位置/Transform 的完整 typed 双向映射仍在路线图中。

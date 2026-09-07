@@ -1,4 +1,9 @@
 {
+  "vectcut": {
+    "base_url": "http://127.0.0.1:9001",
+    "timeout": 120,
+    "draft_folder": "D:/Jianying/Drafts"
+  },
   "providers": [
     {
       "kind": "ffprobe",

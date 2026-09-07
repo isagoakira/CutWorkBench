@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import uuid
+from pathlib import Path
 import json
 import os
 import uuid
@@ -9,6 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol
 
 from .errors import ProjectNotFound, ValidationError
+from .draft_naming import default_draft_name
 from .project_store import ProjectStore
 
 
@@ -104,6 +107,10 @@ class EditorSync:
             current_project_revision=current_project["revision"],
             base_external_fingerprint=session["base_external"]["fingerprint"],
             current_external_fingerprint=current_external["fingerprint"],
+            base_segment_tracks={
+                stable_id: segment.get("track_id")
+                for stable_id, segment in base_project.get("segments", {}).items()
+            },
         )
         session["latest_plan"] = {**plan, "current_external": current_external}
         session["status"] = "previewed"
@@ -153,7 +160,15 @@ class EditorSync:
             "resolutions": resolved,
         }
 
-    def publish(self, session_id: str, *, destination_path: str) -> dict[str, Any]:
+    def publish(
+        self,
+        session_id: str,
+        *,
+        destination_path: str | None = None,
+        change_summary: str | None = None,
+        release_version: int | None = None,
+        reopen_editor: bool = False,
+    ) -> dict[str, Any]:
         session = self.sessions.read(session_id)
         if session.get("status") != "committed":
             raise ValidationError("sync.publish requires sync.commit and cannot be repeated")
@@ -169,10 +184,65 @@ class EditorSync:
         current_external = dict(self.adapter.snapshot(session["draft_path"]))
         if current_external["fingerprint"] != plan["current_external_fingerprint"]:
             raise ValidationError("Jianying draft changed after sync.commit; open a new sync session")
-        patches = _agent_patches(plan, resolved)
+        patches = _agent_patches(plan, resolved, current_project=current)
+        if destination_path is None:
+            destination_path = str(
+                Path(session["draft_path"]).resolve().parent / default_draft_name(
+                    current["title"],
+                    revision=current["revision"],
+                    change_summary=change_summary,
+                    release_version=release_version,
+                )
+            )
+        reopen = getattr(self.adapter, "reopen_published", None)
+        if reopen_editor and not callable(reopen):
+            raise ValidationError(f"editor adapter cannot relaunch a published revision: {self.adapter.adapter_id}")
         receipt = dict(self.adapter.publish(session["draft_path"], destination_path, patches))
+        if reopen_editor:
+            receipt["editor_reopen"] = dict(reopen(destination_path))
         session["status"] = "published"
         session["publish_receipt"] = receipt
+        self.sessions.write(session)
+        return receipt
+
+    def apply(self, session_id: str) -> dict[str, Any]:
+        """Apply approved patches to an already-open editor through a live adapter.
+
+        Unlike ``publish``, this never names or creates a destination project.
+        The live host must atomically apply the exact allowlisted patches and
+        return a fresh normalized snapshot before the session is closed.
+        """
+        session = self.sessions.read(session_id)
+        if session.get("status") != "committed":
+            raise ValidationError("sync.apply requires sync.commit and cannot be repeated")
+        self._assert_profile_pinned(session)
+        plan = session.get("latest_plan")
+        if not plan:
+            raise ValidationError("sync.preview must run before sync.apply")
+        current = self.store.read_project(session["project_id"])
+        if current["revision"] != session.get("committed_project_revision"):
+            raise ValidationError("project changed after sync.commit; open a new sync session")
+        current_external = dict(self.adapter.snapshot(session["draft_path"]))
+        if current_external["fingerprint"] != plan["current_external_fingerprint"]:
+            raise ValidationError("Jianying draft changed after sync.commit; open a new sync session")
+        conflicts = plan["conflicts"]
+        resolved = _validate_resolutions(conflicts, session.get("resolutions", {})) if conflicts else {}
+        patches = _agent_patches(plan, resolved, current_project=current)
+        apply_live = getattr(self.adapter, "apply_live", None)
+        if not callable(apply_live):
+            raise ValidationError(f"editor adapter does not support live apply: {self.adapter.adapter_id}")
+        receipt = dict(apply_live(session["draft_path"], patches))
+        if receipt.get("status") != "applied":
+            raise ValidationError("editor adapter did not confirm live application")
+        if receipt.get("patches") not in (None, patches) and receipt.get("applied_patches") != patches:
+            raise ValidationError("editor adapter live receipt does not confirm the requested patches")
+        result_snapshot = receipt.get("result_snapshot")
+        if not isinstance(result_snapshot, Mapping) or not isinstance(receipt.get("result_fingerprint"), str):
+            raise ValidationError("editor adapter live receipt has no resulting snapshot")
+        if result_snapshot.get("fingerprint") != receipt["result_fingerprint"]:
+            raise ValidationError("editor adapter live receipt fingerprint does not match its snapshot")
+        session["status"] = "applied"
+        session["apply_receipt"] = receipt
         self.sessions.write(session)
         return receipt
 
@@ -212,8 +282,11 @@ class EditorSyncRegistry:
     def commit(self, session_id: str, *, resolutions: Mapping[str, str]) -> dict[str, Any]:
         return self._sync_for_session(session_id).commit(session_id, resolutions=resolutions)
 
-    def publish(self, session_id: str, *, destination_path: str) -> dict[str, Any]:
-        return self._sync_for_session(session_id).publish(session_id, destination_path=destination_path)
+    def publish(self, session_id: str, **arguments: Any) -> dict[str, Any]:
+        return self._sync_for_session(session_id).publish(session_id, **arguments)
+
+    def apply(self, session_id: str) -> dict[str, Any]:
+        return self._sync_for_session(session_id).apply(session_id)
 
     def _sync_for_session(self, session_id: str) -> EditorSync:
         session = self.sessions.read(session_id)
@@ -299,9 +372,17 @@ def _reconcile(
         base_project_props = _project_entity_properties(base_project, stable_id)
         current_project_props = _project_entity_properties(current_project, stable_id)
         if base_project_props and not current_project_props:
-            raise ValidationError(
-                f"publishing deletion of a bound segment is not supported yet: {stable_id}"
-            )
+            changes.append({
+                "kind": "delete", "side": "agent", "external_id": external_id,
+                "stable_id": stable_id, "field": "__deleted__", "base": base_ext, "value": None,
+            })
+            if base_ext is not None and current_ext is not None and current_ext != base_ext:
+                conflicts.append({
+                    "conflict_id": _conflict_id(stable_id, "__deleted__"),
+                    "stable_id": stable_id, "external_id": external_id, "field": "__deleted__",
+                    "base": base_project_props, "agent": None, "human": current_ext.get("properties", {}),
+                })
+            continue
         if base_ext is None:
             continue
         if current_ext is None:
@@ -349,6 +430,15 @@ def _reconcile(
             "stable_id": None, "field": "__entity__", "base": None,
             "value": copy.deepcopy(current_external["entities"][external_id]),
         })
+    base_segments = set(base_project.get("segments", {}))
+    bound_segments = set(bindings.values())
+    for stable_id in sorted(set(current_project.get("segments", {})) - base_segments):
+        if stable_id not in bound_segments:
+            changes.append({
+                "kind": "add", "side": "agent", "external_id": None, "stable_id": stable_id,
+                "field": "__entity__", "base": None,
+                "value": _project_entity_properties(current_project, stable_id),
+            })
     return {"schema_version": 1, "changes": changes, "conflicts": conflicts}
 
 
@@ -481,10 +571,23 @@ def _upsert_external(
     }]
 
 
-def _agent_patches(plan: Mapping[str, Any], resolutions: Mapping[str, str]) -> list[dict[str, Any]]:
+def _agent_patches(
+    plan: Mapping[str, Any], resolutions: Mapping[str, str], *, current_project: Mapping[str, Any]
+) -> list[dict[str, Any]]:
     conflicts = {(item["stable_id"], item["field"]): item for item in plan["conflicts"]}
     external = plan["current_external"]
     patches: list[dict[str, Any]] = []
+    for change in plan["changes"]:
+        if change["side"] != "agent" or change["kind"] != "delete":
+            continue
+        conflict = conflicts.get((change["stable_id"], change["field"]))
+        if conflict and resolutions.get(conflict["conflict_id"]) != "agent":
+            continue
+        entity = external["entities"].get(change["external_id"], {})
+        path = entity.get("entity_path")
+        if not path:
+            raise ValidationError(f"editor adapter cannot delete {change['stable_id']}")
+        patches.append({"op": "remove", "path": path, "stable_id": change["stable_id"]})
     for conflict in plan["conflicts"]:
         if conflict["field"] == "__deleted__" and resolutions.get(conflict["conflict_id"]) == "agent":
             base_entity = conflict.get("base_external_entity", {})
@@ -532,8 +635,12 @@ def _agent_patches(plan: Mapping[str, Any], resolutions: Mapping[str, str]) -> l
         accepted[(change["external_id"], change["field"])] = change
 
     source_ranges: set[str] = set()
+    source_replacements: dict[str, dict[str, Any]] = {}
     for (external_id, field), change in accepted.items():
         entity = external["entities"].get(change["external_id"], {})
+        if field == "source_locator":
+            source_replacements[external_id] = change
+            continue
         if field in {"source_in", "source_out"}:
             source_ranges.add(external_id)
         if field == "source_out":
@@ -542,6 +649,109 @@ def _agent_patches(plan: Mapping[str, Any], resolutions: Mapping[str, str]) -> l
         if not path:
             raise ValidationError(f"editor adapter cannot publish field {change['field']} for {change['stable_id']}")
         patches.append({"op": "set", "path": path, "value": change["value"], "stable_id": change["stable_id"]})
+
+    # A source replacement is structural, not a mutation of a shared material:
+    # copy the original material into the clone, give it a deterministic UUID,
+    # and repoint only the bound segment.  This keeps the old source selectable
+    # and makes replacement reversible in both the Workbench and Jianying.
+    for external_id, change in source_replacements.items():
+        entity = external["entities"].get(external_id, {})
+        material = external.get("materials", {}).get(entity.get("material_external_id"), {})
+        collection_path = material.get("collection_path")
+        material_id_path = entity.get("property_paths", {}).get("material_id")
+        native = material.get("native")
+        segment = current_project.get("segments", {}).get(change["stable_id"], {})
+        source = current_project.get("sources", {}).get(segment.get("source_id"), {})
+        locator = source.get("locator")
+        if not collection_path or not material_id_path or not isinstance(native, Mapping) or not isinstance(locator, str):
+            raise ValidationError(f"editor adapter cannot publish source replacement for {change['stable_id']}")
+        material_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cut-workbench:{change['stable_id']}:{locator}")).upper()
+        local_material_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cut-workbench-local:{change['stable_id']}:{locator}")).lower()
+        replacement = copy.deepcopy(dict(native))
+        replacement["id"] = material_id
+        replacement["local_material_id"] = local_material_id
+        replacement["path"] = locator
+        replacement["material_name"] = Path(locator).name
+        duration = source.get("media_profile", {}).get("duration")
+        if isinstance(duration, (int, float)) and duration > 0:
+            replacement["duration"] = round(float(duration) * 1_000_000)
+        # Material arrays are append-only during clone publication. The base
+        # snapshot makes this stable even when a user has rearranged tracks.
+        material_count = sum(
+            1 for item in external.get("materials", {}).values()
+            if item.get("collection_path") == collection_path
+        )
+        patches.append({
+            "op": "insert", "path": f"{collection_path}/{material_count}", "value": replacement,
+            "stable_id": change["stable_id"],
+        })
+        patches.append({
+            "op": "set", "path": material_id_path, "value": material_id,
+            "stable_id": change["stable_id"],
+        })
+
+    additions = [
+        change for change in plan["changes"]
+        if change["side"] == "agent" and change["kind"] == "add"
+    ]
+    for addition_index, change in enumerate(additions):
+        stable_id = change["stable_id"]
+        segment = current_project.get("segments", {}).get(stable_id, {})
+        source = current_project.get("sources", {}).get(segment.get("source_id"), {})
+        # A typed project track maps to the external track of any existing bound
+        # segment on that same track. This avoids inventing an opaque Jianying
+        # lane while still allowing arbitrary additions to mapped lanes.
+        anchor = next((
+            entity for external_id, bound_id in plan["bindings"].items()
+            if (
+                current_project.get("segments", {}).get(bound_id, {}).get("track_id")
+                or plan.get("base_segment_tracks", {}).get(bound_id)
+            ) == segment.get("track_id")
+            for entity in [external.get("entities", {}).get(external_id, {})]
+        ), None)
+        if not anchor:
+            raise ValidationError(f"new segment requires a mapped external track: {stable_id}")
+        material = external.get("materials", {}).get(anchor.get("material_external_id"), {})
+        track = external.get("tracks", {}).get(anchor.get("track_external_id"), {})
+        collection_path = material.get("collection_path")
+        segment_collection_path = track.get("segment_collection_path")
+        native_material = material.get("native")
+        native_segment = anchor.get("native")
+        if not all((collection_path, segment_collection_path, isinstance(native_material, Mapping), isinstance(native_segment, Mapping))):
+            raise ValidationError(f"editor adapter cannot add segment: {stable_id}")
+        locator = source.get("locator")
+        if not isinstance(locator, str):
+            raise ValidationError(f"new segment source is unavailable: {stable_id}")
+        material_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cut-workbench:{stable_id}:{locator}")).upper()
+        replacement = copy.deepcopy(dict(native_material))
+        replacement.update({
+            "id": material_id,
+            "local_material_id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"cut-workbench-local:{stable_id}:{locator}")).lower(),
+            "path": locator,
+            "material_name": Path(locator).name,
+        })
+        duration = source.get("media_profile", {}).get("duration")
+        if isinstance(duration, (int, float)) and duration > 0:
+            replacement["duration"] = round(float(duration) * 1_000_000)
+        inserted = copy.deepcopy(dict(native_segment))
+        inserted["id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cut-workbench-segment:{stable_id}")).upper()
+        inserted["material_id"] = material_id
+        inserted["speed"] = float(segment.get("speed", 1.0))
+        inserted["source_timerange"] = {
+            "start": round(float(segment["source_in"]) * 1_000_000),
+            "duration": round((float(segment["source_out"]) - float(segment["source_in"])) * 1_000_000),
+        }
+        inserted["target_timerange"] = {
+            "start": round(float(segment["timeline_start"]) * 1_000_000),
+            "duration": round((float(segment["source_out"]) - float(segment["source_in"])) / float(segment.get("speed", 1.0)) * 1_000_000),
+        }
+        inserted.setdefault("clip", {})["transform"] = copy.deepcopy(segment.get("transform", {}))
+        material_count = sum(1 for item in external.get("materials", {}).values() if item.get("collection_path") == collection_path) + addition_index
+        segment_count = int(track.get("segment_count", 0)) + addition_index
+        patches.extend([
+            {"op": "insert", "path": f"{collection_path}/{material_count}", "value": replacement, "stable_id": stable_id},
+            {"op": "insert", "path": f"{segment_collection_path}/{segment_count}", "value": inserted, "stable_id": stable_id},
+        ])
 
     # Editors can expose the source pair directly, or a source start + duration
     # representation. Recalculate duration only for the latter.
@@ -587,7 +797,10 @@ def _validate_resolutions(conflicts: list[Mapping[str, Any]], resolutions: Mappi
 
 def _project_entity_properties(project: Mapping[str, Any], stable_id: str) -> dict[str, Any]:
     if stable_id in project.get("segments", {}):
-        return _segment_properties(project["segments"][stable_id])
+        segment = project["segments"][stable_id]
+        properties = _segment_properties(segment)
+        properties["source_locator"] = project.get("sources", {}).get(segment.get("source_id"), {}).get("locator")
+        return properties
     return {}
 
 

@@ -112,6 +112,12 @@ class CapabilityOrchestratorTests(unittest.TestCase):
         )
         self.assertEqual("agent", policy.route(request, local_available=True))
 
+    def test_local_tts_routes_to_local_by_default_when_a_provider_is_available(self) -> None:
+        policy = RoutingPolicy.default()
+        request = CapabilityRequest(capability="audio.synthesize.tts", inputs={}, quality="standard")
+        self.assertEqual("local", policy.route(request, local_available=True))
+        self.assertEqual("agent", policy.route(request, local_available=False))
+
 
 if __name__ == "__main__":
     unittest.main()
