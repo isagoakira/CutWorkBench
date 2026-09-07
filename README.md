@@ -27,6 +27,7 @@ Cut Workbench 不试图再造一个非线性编辑器。它负责管理剪辑工
 | Cut Protocol 结构验证、视觉证据门禁、Manifest | 可用 |
 | 本地 VectCut 可编辑多轨草稿生成 | 默认启用；`vectcut.execute` 连接本机 `127.0.0.1:9001`，服务未启动则明确失败 |
 | 剪映专业版 11.3 双向三方同步 | 可用；需要外部 codec sidecar |
+| 已打开剪映的增量应用 | 可用桥接协议与 `sync.apply`；需接入受控的剪映侧本地桥接 |
 | Premiere Pro 2023 CEP 桥接 | 可用；当前 typed 写入范围为素材入点/出点 |
 | After Effects 2023 CEP 桥接 | 快照和 opaque 保留可用；typed layer 合并尚未完成 |
 | Dynamic Link 结构化双向编辑 | 尚未完成，目前仅作为 opaque 原生关联保留 |
@@ -228,6 +229,7 @@ sync.open → sync.preview → sync.commit → sync.publish clone
 - `pending_agent` 是正常状态，需要 Agent 完成后通过 `capability.submit` 回填证据。
 - 外部编辑器同步必须先 preview；冲突必须明确选择 `human` 或 `agent`。
 - `sync.publish` 只创建新副本，不覆盖原剪映、`.prproj` 或 `.aep` 工程。省略 `destination_path` 时，默认命名为 `项目名-vN-具体改动`；可传入 `release_version` 与 `change_summary` 明确版本和改动说明。
+- 剪映已打开时，使用独立的 `jianying:live-local` 适配器执行 `sync.open → sync.preview → sync.commit → sync.apply`。它由剪映侧桥接在当前时间线中应用带指纹的白名单补丁，不生成草稿副本，也不会写入正在打开的 `draft_content.json`。桥接尚未连接或回执不匹配时会明确拒绝，不会降级为文件强写。
 - 已绑定的 A/V 片段可保留稳定 ID 地换素材、换轨和重排；换素材会在剪映克隆稿中新增素材记录，只重定向目标片段，原素材仍保留。整条时间线的任意增删重组由本地 VectCut 编译为新可编辑草稿。
 - `handed_off` revision 不可再修改，需要先创建分支。
 
@@ -336,7 +338,7 @@ cut-workbench --root D:/cut-runtime `
 
 ### 剪映
 
-剪映适配器执行基线 A、当前 Workbench B、当前人工草稿 C 的三方合并。未知字幕、贴纸、效果和复合片段作为 opaque 外部实体保存，不会静默丢失。详见 [docs/jianying-sync.md](docs/jianying-sync.md)。
+剪映适配器执行基线 A、当前 Workbench B、当前人工草稿 C 的三方合并。未知字幕、贴纸、效果和复合片段作为 opaque 外部实体保存，不会静默丢失。关闭剪映后的文件适配器只发布安全副本；已打开剪映的增量改动通过 `jianying:live-local` 桥接和 `sync.apply` 执行。详见 [docs/jianying-sync.md](docs/jianying-sync.md)。
 
 ### Premiere Pro / After Effects
 

@@ -10,7 +10,7 @@ from xml.etree import ElementTree
 
 from cut_workbench.editor_sync import EditorSyncRegistry, SyncSessionStore
 from cut_workbench.errors import ValidationError
-from cut_workbench.local_editor import AfterEffectsAdapter, LocalFileBridge, PremiereAdapter
+from cut_workbench.local_editor import AfterEffectsAdapter, JianyingLiveAdapter, LocalFileBridge, PremiereAdapter
 from cut_workbench.project_store import ProjectStore
 
 
@@ -242,6 +242,38 @@ class LocalFileBridgeTests(unittest.TestCase):
             bridge.request_id_factory = write_wrong_receipt
             with self.assertRaisesRegex(ValidationError, "another adapter"):
                 adapter.publish(draft, destination, [])
+
+    def test_jianying_live_adapter_applies_an_allowlisted_patch_without_cloning_or_closing(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            draft = "E:/JianYing/JianyingPro Drafts/active-draft"
+            bridge = self._bridge(root, adapter_id="jianying:live-local", draft_path=draft)
+            authorization = json.loads((root / "authorization.json").read_text(encoding="utf-8"))
+            authorization["live_apply_enabled"] = True
+            (root / "authorization.json").write_text(json.dumps(authorization), encoding="utf-8")
+            adapter = JianyingLiveAdapter(bridge)
+            adapter.snapshot(draft)
+            patch = {"op": "set", "path": "/sequences/sequence-1/video/0/clip-1/speed", "value": 1.25}
+
+            def write_live_receipt() -> str:
+                result = snapshot(adapter_id="jianying:live-local", draft_path=draft, fingerprint="fingerprint-2")
+                result["entities"]["clip-1"]["properties"]["speed"] = 1.25
+                (root / "responses").mkdir()
+                (root / "responses" / "request-1.json").write_text(json.dumps({
+                    "protocol_version": 1, "request_id": "request-1", "status": "applied",
+                    "adapter_id": "jianying:live-local", "draft_path": draft,
+                    "source_fingerprint": "fingerprint-1", "result_fingerprint": "fingerprint-2",
+                    "applied_patches": [patch], "result_snapshot": result,
+                }), encoding="utf-8")
+                return "request-1"
+
+            bridge.request_id_factory = write_live_receipt
+            receipt = adapter.apply_live(draft, [patch])
+            command = json.loads((root / "commands" / "request-1.json").read_text(encoding="utf-8"))
+
+        self.assertEqual("applied", receipt["status"])
+        self.assertEqual("apply-live", command["kind"])
+        self.assertEqual(draft, command["draft_path"])
 
 
 class EditorSyncRegistryTests(unittest.TestCase):

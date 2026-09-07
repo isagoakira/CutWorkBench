@@ -140,6 +140,9 @@ class WorkbenchApp:
                 "change_summary": string,
                 "release_version": integer,
             }, ["session_id"]),
+            _tool("sync.apply", "Apply merged Agent changes to a connected live editor without creating a clone", {
+                "session_id": string,
+            }, ["session_id"]),
         ]
 
     def call_tool(self, name: str, arguments: Mapping[str, Any]) -> Any:
@@ -180,6 +183,7 @@ class WorkbenchApp:
                 change_summary=a.get("change_summary"),
                 release_version=a.get("release_version"),
             ),
+            "sync.apply": lambda a: self._sync().apply(a["session_id"]),
         }
         if name not in handlers:
             raise KeyError(f"unknown tool: {name}")

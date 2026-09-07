@@ -287,6 +287,16 @@ cut-workbench `
 3. `sync.preview` 比较基线 A、Agent 当前 B、人工草稿 C。
 4. `sync.commit` 对每个冲突明确选择 `human` 或 `agent`。
 5. 关闭剪映，使用不存在的新目标目录执行 `sync.publish`。
+
+### 剪映保持打开时的增量修改
+
+配置 `jianying:live-local` 后，不使用 codec 文件发布器。剪映侧桥接连接当前草稿并写入快照；首次连接后，在同一剪映会话内每次新需求都可执行：
+
+1. `sync.open` 连接当前草稿。
+2. 在 Workbench 修改工程，再执行 `sync.preview` 和 `sync.commit`。
+3. 执行 `sync.apply`，由剪映侧桥接在当前打开的时间线应用变更。
+
+`sync.apply` 没有 `destination_path`：它不是克隆发布。它要求桥接授权 `live_apply_enabled`、基线指纹匹配和完整回执；任一条件不满足时不写草稿文件。桥接启动参数与协议见 [jianying-sync.md](jianying-sync.md#已打开剪映的增量应用)。
 6. 打开 clone 做真实视觉检查；原草稿保留为回滚基线。
 
 完整约束见 [jianying-sync.md](jianying-sync.md)。

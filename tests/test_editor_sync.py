@@ -93,6 +93,22 @@ class FakeAdapter:
         return receipt
 
 
+class FakeLiveAdapter(FakeAdapter):
+    adapter_id = "jianying:live-local"
+
+    def __init__(self, snapshots):
+        super().__init__(snapshots)
+        self.applied = []
+
+    def apply_live(self, draft_path, patches):
+        self.applied.append(copy.deepcopy(patches))
+        result = external_snapshot(speed=1.5)
+        return {
+            "status": "applied", "draft_path": str(draft_path), "patches": copy.deepcopy(patches),
+            "result_fingerprint": result["fingerprint"], "result_snapshot": result,
+        }
+
+
 class JianyingAdapterTests(unittest.TestCase):
     def test_codec_rechecks_the_staged_helper_against_the_mandatory_pin(self) -> None:
         with TemporaryDirectory() as directory:
@@ -309,6 +325,27 @@ class EditorSyncTests(unittest.TestCase):
             "D:/drafts/太忆空间效果演示-v1-有限说明字幕",
             receipt["destination_path"].replace("\\", "/"),
         )
+
+    def test_apply_updates_the_connected_live_editor_without_a_destination_clone(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store, project = self._project(root)
+            adapter = FakeLiveAdapter([external_snapshot()])
+            sync = EditorSync(store=store, sessions=SyncSessionStore(root), adapter=adapter)
+            opened = sync.open(project_id="sync", draft_path="D:/drafts/currently-open")
+            store.apply_plan(
+                project_id="sync", expected_revision=project["revision"], actor="agent", reason="speed up",
+                operations=[{"op": "update_segment", "segment_id": "SEG-001", "changes": {"speed": 1.5}}],
+            )
+            sync.preview(opened["session_id"])
+            sync.commit(opened["session_id"], resolutions={})
+
+            receipt = sync.apply(opened["session_id"])
+            session = SyncSessionStore(root).read(opened["session_id"])
+
+        self.assertEqual("applied", receipt["status"])
+        self.assertEqual("applied", session["status"])
+        self.assertTrue(any(patch["path"].endswith("/speed") for patch in adapter.applied[0]))
 
     def test_conflicting_human_timing_can_be_committed_as_a_new_revision(self) -> None:
         with TemporaryDirectory() as directory:

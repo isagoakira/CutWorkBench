@@ -11,7 +11,7 @@ from .config import load_runtime_config, load_vectcut_config
 from .mcp_server import McpServer
 from .editor_sync import EditorSyncRegistry, SyncSessionStore
 from .jianying import JianyingCodecCommand, JianyingDraftAdapter, discover_jianying_draft_index
-from .local_editor import AfterEffectsAdapter, LocalFileBridge, PremiereAdapter, panel_tree_hash
+from .local_editor import AfterEffectsAdapter, JianyingLiveAdapter, LocalFileBridge, PremiereAdapter, panel_tree_hash
 from .project_store import ProjectStore
 from .generation_worker import GenerationWorker, JsonCommandGenerationExecutor
 from .vectcut import VectCutHttpTransport
@@ -33,6 +33,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--jianying-install", type=Path)
     parser.add_argument("--jianying-version", default="local")
     parser.add_argument("--jianying-codec-sha256")
+    parser.add_argument("--jianying-live-bridge-root", type=Path)
+    parser.add_argument("--jianying-live-profile-sha256")
+    parser.add_argument("--jianying-live-version")
     parser.add_argument("--premiere-bridge-root", type=Path)
     parser.add_argument("--premiere-bridge-kind", choices=("cep", "uxp"), default="cep")
     parser.add_argument("--premiere-profile-sha256")
@@ -88,6 +91,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             codec=codec, editor_version=args.jianying_version,
             draft_index_path=discover_jianying_draft_index(),
         )
+        adapters[adapter.adapter_id] = adapter
+    if args.jianying_live_bridge_root:
+        if not all((args.jianying_live_profile_sha256, args.jianying_live_version)):
+            parser.error("Jianying live bridge requires a profile hash and editor version pin")
+        bridge = LocalFileBridge(
+            args.jianying_live_bridge_root, adapter_id="jianying:live-local",
+            timeout=args.editor_bridge_timeout, poll_interval=args.editor_bridge_poll_interval,
+            expected_profile_sha256=args.jianying_live_profile_sha256,
+            expected_editor_version=args.jianying_live_version,
+        )
+        adapter = JianyingLiveAdapter(bridge)
         adapters[adapter.adapter_id] = adapter
     if args.premiere_bridge_root:
         if not all((args.premiere_profile_sha256, args.premiere_version, args.premiere_panel_root, args.premiere_panel_sha256)):

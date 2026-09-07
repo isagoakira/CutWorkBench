@@ -142,6 +142,48 @@ class LocalFileBridge:
         self._snapshots[destination_key] = copy.deepcopy(dict(receipt["result_snapshot"]))
         return {**receipt, "adapter_id": self.adapter_id}
 
+    def apply_live(
+        self,
+        draft_path: str | Path,
+        patches: list[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        """Ask an editor-owned live bridge to patch its active timeline.
+
+        Workbench never writes an open editor project.  The host bridge owns the
+        mutation and must acknowledge the exact patch list with a new snapshot.
+        """
+        profile = self.profile()
+        if not profile["writable"]:
+            raise ValidationError("editor bridge is not writable")
+        if not self._live_apply_is_authorized():
+            raise ValidationError("editor bridge live apply is not authorized in the local editor bridge")
+        source_key = _path_key(draft_path)
+        current = self._snapshots.get(source_key)
+        if current is None:
+            raise ValidationError("live apply requires a fresh editor snapshot")
+        _validate_patches(patches, _writable_paths(current))
+        request_id = self.request_id_factory()
+        if not isinstance(request_id, str) or not request_id:
+            raise ValidationError("editor bridge generated an invalid request ID")
+        command = {
+            "protocol_version": self.protocol_version,
+            "request_id": request_id,
+            "kind": "apply-live",
+            "adapter_id": self.adapter_id,
+            "draft_path": str(draft_path),
+            "expected_fingerprint": current["fingerprint"],
+            "patches": [copy.deepcopy(dict(patch)) for patch in patches],
+        }
+        _atomic_write(self.root / "commands" / f"{request_id}.json", command)
+        receipt = self._await_receipt(request_id)
+        _validate_live_receipt(
+            receipt, request_id=request_id, draft_path=draft_path,
+            expected_fingerprint=current["fingerprint"], expected_adapter_id=self.adapter_id,
+            expected_patches=patches,
+        )
+        self._snapshots[source_key] = copy.deepcopy(dict(receipt["result_snapshot"]))
+        return {**receipt, "adapter_id": self.adapter_id}
+
     def _publish_is_authorized(self) -> bool:
         value = _read_object(self.root / "authorization.json", "editor bridge authorization")
         if value.get("protocol_version") != self.protocol_version or value.get("adapter_id") != self.adapter_id:
@@ -149,6 +191,14 @@ class LocalFileBridge:
         if not isinstance(value.get("publish_enabled"), bool):
             raise ValidationError("editor bridge authorization has no publish state")
         return value["publish_enabled"]
+
+    def _live_apply_is_authorized(self) -> bool:
+        value = _read_object(self.root / "authorization.json", "editor bridge authorization")
+        if value.get("protocol_version") != self.protocol_version or value.get("adapter_id") != self.adapter_id:
+            raise ValidationError("editor bridge authorization belongs to another adapter or protocol")
+        if not isinstance(value.get("live_apply_enabled"), bool):
+            raise ValidationError("editor bridge authorization has no live apply state")
+        return value["live_apply_enabled"]
 
     def _await_receipt(self, request_id: str) -> dict[str, Any]:
         response_path = self.root / "responses" / f"{request_id}.json"
@@ -257,6 +307,31 @@ class AfterEffectsAdapter(_LocalEditorAdapter):
         super().__init__(bridge)
 
 
+class JianyingLiveAdapter:
+    """Live Jianying adapter backed by an editor-owned local bridge.
+
+    This adapter deliberately has no draft codec and never writes `draft_content`.
+    A bridge running in the already-open editor supplies snapshots and applies a
+    constrained, acknowledged patch to its current timeline.
+    """
+
+    adapter_id = "jianying:live-local"
+
+    def __init__(self, bridge: LocalFileBridge) -> None:
+        if bridge.adapter_id != self.adapter_id:
+            raise ValidationError("JianyingLiveAdapter requires adapter_id jianying:live-local")
+        self.bridge = bridge
+
+    def profile(self) -> dict[str, Any]:
+        return {**self.bridge.profile(), "mode": "live-in-editor"}
+
+    def snapshot(self, draft_path: str | Path) -> dict[str, Any]:
+        return self.bridge.snapshot(draft_path)
+
+    def apply_live(self, draft_path: str | Path, patches: list[Mapping[str, Any]]) -> dict[str, Any]:
+        return self.bridge.apply_live(draft_path, patches)
+
+
 def _validate_normalized_snapshot(snapshot: Mapping[str, Any], adapter_id: str) -> None:
     if snapshot.get("adapter_id") != adapter_id:
         raise ValidationError("normalized editor snapshot belongs to another adapter")
@@ -321,6 +396,36 @@ def _validate_receipt(
     for patch in expected_patches:
         if not _patch_value_applied(result_values.get(patch["path"]), patch.get("value")):
             raise ValidationError("editor bridge receipt clone snapshot does not contain an applied patch")
+
+
+def _validate_live_receipt(
+    receipt: Mapping[str, Any], *, request_id: str, draft_path: str | Path,
+    expected_fingerprint: str, expected_adapter_id: str, expected_patches: list[Mapping[str, Any]],
+) -> None:
+    if receipt.get("protocol_version") != LocalFileBridge.protocol_version:
+        raise ValidationError("editor bridge live receipt has an unsupported protocol version")
+    if receipt.get("request_id") != request_id or receipt.get("status") != "applied":
+        raise ValidationError("editor bridge live receipt does not confirm application")
+    if receipt.get("adapter_id") != expected_adapter_id:
+        raise ValidationError("editor bridge live receipt belongs to another adapter")
+    if _path_key(receipt.get("draft_path")) != _path_key(draft_path):
+        raise ValidationError("editor bridge live receipt draft does not match the apply request")
+    if receipt.get("source_fingerprint") != expected_fingerprint:
+        raise ValidationError("editor bridge live receipt was produced from a stale project snapshot")
+    if receipt.get("applied_patches") != [dict(patch) for patch in expected_patches]:
+        raise ValidationError("editor bridge live receipt does not confirm the requested patches")
+    if not isinstance(receipt.get("result_fingerprint"), str) or not receipt["result_fingerprint"]:
+        raise ValidationError("editor bridge live receipt has no resulting project fingerprint")
+    result_snapshot = receipt.get("result_snapshot")
+    if not isinstance(result_snapshot, Mapping):
+        raise ValidationError("editor bridge live receipt has no normalized live snapshot")
+    _validate_normalized_snapshot(result_snapshot, expected_adapter_id)
+    if result_snapshot.get("fingerprint") != receipt["result_fingerprint"]:
+        raise ValidationError("editor bridge live receipt fingerprint does not match its snapshot")
+    result_values = _snapshot_property_values(result_snapshot)
+    for patch in expected_patches:
+        if not _patch_value_applied(result_values.get(patch["path"]), patch.get("value")):
+            raise ValidationError("editor bridge live snapshot does not contain an applied patch")
 
 
 def _snapshot_property_values(snapshot: Mapping[str, Any]) -> dict[str, Any]:

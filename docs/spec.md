@@ -15,7 +15,7 @@ Build a zero-subscription, local-first video editing workbench where an external
 7. Enforce the Cut Protocol loop: full-source audit at no less than 2 fps with evidence, explicit decisions and escalations, deterministic structural verification, visual evidence before delivery/handoff, versioned manifest, approved downgrade declarations, and immutable handoff with branching.
 8. Depend only on Python's standard library at runtime. FFmpeg/ffprobe and local model sidecars are optional external processes.
 9. Support a three-way editor round trip: pinned baseline, current Workbench revision, and current manual editor draft. Manual edits become a new immutable revision; collisions require an explicit side choice.
-10. Preserve editor-native unknown entities and fields as opaque data. Incremental publishing must patch a newly cloned draft, never overwrite the source draft, and must refuse to write while Jianying is running.
+10. Preserve editor-native unknown entities and fields as opaque data. File-based incremental publishing must patch a newly cloned draft, never overwrite the source draft, and must refuse to write while Jianying is running. A separately authenticated in-editor live bridge may apply only allowlisted, fingerprint-pinned patches to its active timeline and must return a fresh snapshot receipt.
 11. Keep the editor API Agent-neutral through `sync.open`, `sync.preview`, `sync.commit`, and `sync.publish`; editor encryption/serialization belongs in replaceable adapters.
 
 ## Non-goals for v0.1

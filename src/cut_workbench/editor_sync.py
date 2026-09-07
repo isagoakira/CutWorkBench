@@ -199,6 +199,47 @@ class EditorSync:
         self.sessions.write(session)
         return receipt
 
+    def apply(self, session_id: str) -> dict[str, Any]:
+        """Apply approved patches to an already-open editor through a live adapter.
+
+        Unlike ``publish``, this never names or creates a destination project.
+        The live host must atomically apply the exact allowlisted patches and
+        return a fresh normalized snapshot before the session is closed.
+        """
+        session = self.sessions.read(session_id)
+        if session.get("status") != "committed":
+            raise ValidationError("sync.apply requires sync.commit and cannot be repeated")
+        self._assert_profile_pinned(session)
+        plan = session.get("latest_plan")
+        if not plan:
+            raise ValidationError("sync.preview must run before sync.apply")
+        current = self.store.read_project(session["project_id"])
+        if current["revision"] != session.get("committed_project_revision"):
+            raise ValidationError("project changed after sync.commit; open a new sync session")
+        current_external = dict(self.adapter.snapshot(session["draft_path"]))
+        if current_external["fingerprint"] != plan["current_external_fingerprint"]:
+            raise ValidationError("Jianying draft changed after sync.commit; open a new sync session")
+        conflicts = plan["conflicts"]
+        resolved = _validate_resolutions(conflicts, session.get("resolutions", {})) if conflicts else {}
+        patches = _agent_patches(plan, resolved, current_project=current)
+        apply_live = getattr(self.adapter, "apply_live", None)
+        if not callable(apply_live):
+            raise ValidationError(f"editor adapter does not support live apply: {self.adapter.adapter_id}")
+        receipt = dict(apply_live(session["draft_path"], patches))
+        if receipt.get("status") != "applied":
+            raise ValidationError("editor adapter did not confirm live application")
+        if receipt.get("patches") not in (None, patches) and receipt.get("applied_patches") != patches:
+            raise ValidationError("editor adapter live receipt does not confirm the requested patches")
+        result_snapshot = receipt.get("result_snapshot")
+        if not isinstance(result_snapshot, Mapping) or not isinstance(receipt.get("result_fingerprint"), str):
+            raise ValidationError("editor adapter live receipt has no resulting snapshot")
+        if result_snapshot.get("fingerprint") != receipt["result_fingerprint"]:
+            raise ValidationError("editor adapter live receipt fingerprint does not match its snapshot")
+        session["status"] = "applied"
+        session["apply_receipt"] = receipt
+        self.sessions.write(session)
+        return receipt
+
     def _assert_profile_pinned(self, session: Mapping[str, Any]) -> None:
         pinned = session.get("adapter_profile")
         current = dict(self.adapter.profile())
@@ -237,6 +278,9 @@ class EditorSyncRegistry:
 
     def publish(self, session_id: str, **arguments: Any) -> dict[str, Any]:
         return self._sync_for_session(session_id).publish(session_id, **arguments)
+
+    def apply(self, session_id: str) -> dict[str, Any]:
+        return self._sync_for_session(session_id).apply(session_id)
 
     def _sync_for_session(self, session_id: str) -> EditorSync:
         session = self.sessions.read(session_id)
