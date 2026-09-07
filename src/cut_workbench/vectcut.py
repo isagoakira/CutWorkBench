@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import platform
+from pathlib import Path
 from typing import Any, Mapping, Protocol
 from urllib import error, request
 
@@ -168,7 +171,23 @@ class VectCutHttpTransport:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
+    def health(self) -> dict[str, Any]:
+        """Check that a local VectCutAPI HTTP service is reachable without mutating a draft."""
+        try:
+            with request.urlopen(f"{self.base_url}/get_mask_types", timeout=min(self.timeout, 5)) as response:
+                value = json.loads(response.read().decode("utf-8"))
+                valid = isinstance(value, dict) and value.get("success") is True and isinstance(value.get("output"), list)
+                return {"reachable": valid, "base_url": self.base_url, "http_status": response.status}
+        except (error.URLError, OSError, ValueError) as exc:
+            return {"reachable": False, "base_url": self.base_url, "error": str(exc)}
+
     def call(self, tool: str, arguments: Mapping[str, Any]) -> Mapping[str, Any]:
+        if tool == "save_draft" and arguments.get("draft_folder"):
+            draft_id = str(arguments.get("draft_id", ""))
+            if not draft_id or Path(draft_id).name != draft_id or "/" in draft_id or "\\" in draft_id:
+                raise ValidationError("invalid VectCut draft ID")
+            if (Path(arguments["draft_folder"]) / draft_id).exists():
+                raise ValidationError("refusing to overwrite an existing VectCut draft")
         body = json.dumps(dict(arguments), ensure_ascii=False).encode("utf-8")
         http_request = request.Request(
             f"{self.base_url}/{tool}", data=body,
@@ -184,9 +203,26 @@ class VectCutHttpTransport:
         if value.get("success") is False:
             raise ValidationError(f"VectCut rejected {tool}: {value.get('error') or value.get('message')}")
         result = value.get("output", value.get("result", value))
+        if isinstance(result, str) and tool == "query_script":
+            result = json.loads(result)
         if not isinstance(result, Mapping):
             raise ValidationError(f"VectCut result is not an object for {tool}")
+        if result.get("success") is False:
+            raise ValidationError(f"VectCut rejected {tool}: {result.get('error')}")
         return result
+
+
+def default_vectcut_draft_folder(system: str | None = None, home: Path | None = None) -> Path:
+    """Return the conventional Jianying draft root without assuming a particular host machine."""
+    system = system or platform.system()
+    home = home or Path.home()
+    if system == "Darwin":
+        return home / "Movies" / "JianyingPro" / "User Data" / "Projects" / "com.lveditor.draft"
+    if system == "Windows":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data) / "JianyingPro" / "User Data" / "Projects" / "com.lveditor.draft"
+    return home / ".local" / "share" / "JianyingPro" / "User Data" / "Projects" / "com.lveditor.draft"
 
 
 def _vectcut_transform(transform: Mapping[str, Any]) -> dict[str, Any]:

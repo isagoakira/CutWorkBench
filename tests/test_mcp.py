@@ -41,6 +41,7 @@ class McpSurfaceTests(unittest.TestCase):
             self.assertIn("project.create", names)
             self.assertIn("capability.request", names)
             self.assertIn("vectcut.compile", names)
+            self.assertTrue({"vectcut.health", "vectcut.execute"} <= names)
             self.assertTrue({
                 "generation.contract", "generation.request", "generation.pending",
                 "generation.reconciliation",

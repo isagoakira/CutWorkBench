@@ -264,6 +264,8 @@ cut-workbench --root $workbenchRoot call vectcut.compile '{"project_id":"tutoria
 
 该工具返回可审计调用计划，不自动联网或渲染。出现 unsupported control 或 opaque external entity 时会明确拒绝，避免静默丢失原生对象。
 
+默认本地执行通道已提供 `vectcut.health` 和 `vectcut.execute`。启动本地 VectCutAPI 后，使用 `call vectcut.execute '{"project_id":"tutorial-01","revision":2,"draft_folder":"D:/drafts"}'` 生成新草稿。返回的 receipt 包含实际草稿路径；执行同时验证落盘文件与素材，并保存调用回执。参见 README 的 Windows/macOS 本地部署步骤。
+
 ## 9. 剪映双向同步
 
 剪映适配器需要与本机版本匹配的外部 codec，并强制 SHA-256 pin：

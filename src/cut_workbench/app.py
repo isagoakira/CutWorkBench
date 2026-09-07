@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
+import uuid
 from typing import Any, Callable, Mapping
 
 from .capabilities import CapabilityOrchestrator, CapabilityRequest, ProviderRegistry, RoutingPolicy
@@ -9,7 +11,7 @@ from .local_providers import FfprobeProvider
 from .manifest import render_cut_manifest
 from .project_store import ProjectStore
 from .production_workflow import production_contract, production_status
-from .vectcut import VectCutCompiler
+from .vectcut import VectCutCompiler, VectCutExecutor, VectCutHttpTransport, VectCutTransport, default_vectcut_draft_folder
 from .verification import verify_project
 from .editor_sync import EditorSync
 from .tapnow import GenerativeOrchestrator, TapNowAgenticAdapter
@@ -26,6 +28,8 @@ class WorkbenchApp:
         policy: RoutingPolicy | None = None,
         editor_sync: EditorSync | None = None,
         generative: GenerativeOrchestrator | None = None,
+        vectcut_transport: VectCutTransport | None = None,
+        vectcut_draft_folder: str | None = None,
     ) -> None:
         self.root = Path(root)
         self.projects = ProjectStore(self.root)
@@ -36,6 +40,8 @@ class WorkbenchApp:
             policy=policy or RoutingPolicy.default(),
         )
         self.vectcut = VectCutCompiler()
+        self.vectcut_transport = vectcut_transport or VectCutHttpTransport()
+        self.vectcut_draft_folder = vectcut_draft_folder or str(default_vectcut_draft_folder())
         self.editor_sync = editor_sync
         self.generative = generative or GenerativeOrchestrator(
             jobs=self.jobs, adapter=TapNowAgenticAdapter(artifact_root=self.root)
@@ -113,6 +119,10 @@ class WorkbenchApp:
             _tool("vectcut.compile", "Compile a project revision to a separable VectCut call plan", {
                 "project_id": string, "revision": integer, "draft_folder": string,
             }, ["project_id"]),
+            _tool("vectcut.health", "Check the mandatory local VectCutAPI service without changing a draft", {}, []),
+            _tool("vectcut.execute", "Compile and execute a revision through local VectCutAPI into a new editable Jianying draft", {
+                "project_id": string, "revision": integer, "draft_folder": string,
+            }, ["project_id"]),
             _tool("sync.open", "Open a version-pinned external editing session", {
                 "project_id": string, "draft_path": string, "revision": integer,
                 "bindings": {"type": "object", "additionalProperties": string},
@@ -154,6 +164,8 @@ class WorkbenchApp:
             "generation.authorize": lambda a: self.generative.authorize(**dict(a)),
             "generation.submit": lambda a: self.generative.submit(**dict(a)),
             "vectcut.compile": self._compile_vectcut,
+            "vectcut.health": lambda a: self._vectcut_health(),
+            "vectcut.execute": self._execute_vectcut,
             "sync.open": lambda a: self._sync().open(**dict(a)),
             "sync.preview": lambda a: self._sync().preview(a["session_id"]),
             "sync.commit": lambda a: self._sync().commit(
@@ -179,7 +191,63 @@ class WorkbenchApp:
 
     def _compile_vectcut(self, arguments: Mapping[str, Any]) -> Any:
         project = self.projects.read_project(arguments["project_id"], arguments.get("revision"))
-        return self.vectcut.compile(project, draft_folder=arguments.get("draft_folder"))
+        return self.vectcut.compile(project, draft_folder=arguments.get("draft_folder") or self.vectcut_draft_folder)
+
+    def _vectcut_health(self) -> dict[str, Any]:
+        if isinstance(self.vectcut_transport, VectCutHttpTransport):
+            value = self.vectcut_transport.health()
+            value["draft_folder"] = self.vectcut_draft_folder
+            return value
+        return {"reachable": True, "transport": type(self.vectcut_transport).__name__, "draft_folder": self.vectcut_draft_folder}
+
+    def _execute_vectcut(self, arguments: Mapping[str, Any]) -> Any:
+        plan = self._compile_vectcut(arguments)
+        health = self._vectcut_health()
+        if not health["reachable"]:
+            raise RuntimeError(
+                f"local VectCutAPI is not reachable at {health.get('base_url')}; start it before vectcut.execute"
+            )
+        receipt = VectCutExecutor(self.vectcut_transport).execute(plan)
+        if isinstance(self.vectcut_transport, VectCutHttpTransport):
+            draft_id = receipt["calls"][0]["result"]["draft_id"]
+            status = self.vectcut_transport.call("query_draft_status", {"task_id": draft_id})
+            if status.get("status") != "completed":
+                raise RuntimeError(f"VectCut save did not complete: {status}")
+            folder = Path(plan["calls"][-1]["arguments"]["draft_folder"]) / draft_id
+            candidates = [folder / "draft_content.json", folder / "draft_info.json"]
+            content_path = next((p for p in candidates if p.is_file()), None)
+            if content_path is None:
+                raise RuntimeError(f"VectCut reported saved but no draft content exists: {folder}")
+            content = json.loads(content_path.read_text(encoding="utf-8"))
+            actual = [s for t in content.get("tracks", []) for s in t.get("segments", [])]
+            expected = [c for c in plan["calls"] if "stable_id" in c]
+            if len(actual) != len(expected):
+                raise RuntimeError(f"VectCut lost entities: expected {len(expected)}, found {len(actual)}")
+            for call in expected:
+                args = call["arguments"]
+                tracks = [t for t in content["tracks"] if t.get("name") == args["track_name"]]
+                start = args.get("target_start", args.get("start", 0))
+                duration = (args["end"] - args["start"]) / args.get("speed", 1)
+                matches = [s for t in tracks for s in t.get("segments", [])
+                           if abs(s["target_timerange"].get("start", 0) / 1e6 - start) < 1e-5
+                           and abs(s["target_timerange"]["duration"] / 1e6 - duration) < 1e-5]
+                if len(matches) != 1:
+                    raise RuntimeError(f"VectCut timeline mismatch: {call['stable_id']}")
+                if call["tool"] in ("add_video", "add_audio"):
+                    source = matches[0].get("source_timerange", {})
+                    if abs(source.get("start", 0) / 1e6 - args["start"]) >= 1e-5:
+                        raise RuntimeError(f"VectCut source range mismatch: {call['stable_id']}")
+            for kind in ("videos", "audios"):
+                for material in content.get("materials", {}).get(kind, []):
+                    if not Path(material.get("path", "")).is_file():
+                        raise RuntimeError(f"VectCut saved missing media: {material.get('path')}")
+            receipt.update(draft_id=draft_id, draft_path=str(folder), save_status=status, entity_count=len(actual))
+        receipt_dir = self.root / "vectcut-executions"
+        receipt_dir.mkdir(parents=True, exist_ok=True)
+        receipt_path = receipt_dir / f"{uuid.uuid4().hex}.json"
+        receipt_path.write_text(json.dumps({"plan": plan, "receipt": receipt}, ensure_ascii=False, indent=2), encoding="utf-8")
+        receipt["receipt_path"] = str(receipt_path)
+        return {"status": "completed", "project_id": plan["project_id"], "revision": plan["revision"], "draft_folder": plan["calls"][-1]["arguments"].get("draft_folder"), "plan": plan, "receipt": receipt}
 
     def _sync(self) -> EditorSync:
         if self.editor_sync is None:

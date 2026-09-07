@@ -64,7 +64,10 @@ def external_snapshot(
             },
         },
         "materials": {
-            "jy-mat-1": {"external_id": "jy-mat-1", "kind": "video", "path": "D:/media/source.mp4"},
+            "jy-mat-1": {
+                "external_id": "jy-mat-1", "kind": "video", "path": "D:/media/source.mp4",
+                "collection_path": "/materials/videos", "native": {"id": "jy-mat-1", "path": "D:/media/source.mp4"},
+            },
         },
         "entities": entities,
         "native_summary": {},
@@ -368,6 +371,75 @@ class EditorSyncTests(unittest.TestCase):
             by_path = {patch["path"]: patch["value"] for patch in receipt["patches"]}
             self.assertEqual(1.0, by_path["/tracks/0/segments/0/source_timerange/start"])
             self.assertEqual(3.0, by_path["/tracks/0/segments/0/source_timerange/duration"])
+
+    def test_agent_source_replacement_clones_a_material_and_keeps_the_original_available(self) -> None:
+        draft = {
+            "id": "draft-1",
+            "materials": {"videos": [{
+                "id": "mat-a", "type": "video", "path": "D:/media/source.mp4", "duration": 5000000,
+                "material_name": "source.mp4", "local_material_id": "local-a",
+            }]},
+            "tracks": [{"id": "track-1", "type": "video", "segments": [{
+                "id": "seg-1", "material_id": "mat-a", "speed": 1,
+                "source_timerange": {"start": 0, "duration": 5000000},
+                "target_timerange": {"start": 0, "duration": 5000000},
+            }]}],
+        }
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store, project = self._project(root)
+            project = store.apply_plan(
+                project_id="sync", expected_revision=project["revision"], actor="agent", reason="register option",
+                operations=[{"op": "register_source", "source_id": "SRC-002", "locator": "D:/media/b.mp4",
+                             "media_profile": {"duration": 7}}],
+            )
+            source = root / "source"
+            destination = root / "published"
+            source.mkdir()
+            (source / "draft_content.json").write_text(json.dumps(draft), encoding="utf-8")
+            adapter = JianyingDraftAdapter(
+                codec=PlainJsonCodec(), editor_version="fixture", process_checker=lambda: False,
+            )
+            sync = EditorSync(store=store, sessions=SyncSessionStore(root), adapter=adapter)
+            opened = sync.open(project_id="sync", draft_path=str(source))
+            store.apply_plan(
+                project_id="sync", expected_revision=project["revision"], actor="agent", reason="replace option",
+                operations=[{"op": "update_segment", "segment_id": "SEG-001", "changes": {"source_id": "SRC-002"}}],
+            )
+            preview = sync.preview(opened["session_id"])
+            self.assertTrue(any(change["field"] == "source_locator" for change in preview["changes"]))
+            sync.commit(opened["session_id"], resolutions={})
+            sync.publish(opened["session_id"], destination_path=str(destination))
+            published = json.loads((destination / "draft_content.json").read_text(encoding="utf-8"))
+
+        materials = published["materials"]["videos"]
+        self.assertEqual(["D:/media/source.mp4", "D:/media/b.mp4"], [item["path"] for item in materials])
+        self.assertEqual("b.mp4", materials[-1]["material_name"])
+        self.assertEqual(7000000, materials[-1]["duration"])
+        self.assertEqual(materials[-1]["id"], published["tracks"][0]["segments"][0]["material_id"])
+
+    def test_agent_add_and_delete_are_emitted_as_native_structural_patches(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            store, project = self._project(root)
+            adapter = FakeAdapter([external_snapshot(), external_snapshot()])
+            sync = EditorSync(store=store, sessions=SyncSessionStore(root), adapter=adapter)
+            opened = sync.open(project_id="sync", draft_path="D:/drafts/demo")
+            store.apply_plan(
+                project_id="sync", expected_revision=project["revision"], actor="agent", reason="rebuild",
+                operations=[
+                    {"op": "remove_entity", "stable_id": "SEG-001"},
+                    {"op": "add_segment", "segment_id": "SEG-002", "source_id": "SRC-001", "track_id": "V1-BASE",
+                     "source_in": 1, "source_out": 3, "timeline_start": 0},
+                ],
+            )
+            preview = sync.preview(opened["session_id"])
+            self.assertTrue(any(item["kind"] == "delete" and item["side"] == "agent" for item in preview["changes"]))
+            self.assertTrue(any(item["kind"] == "add" and item["side"] == "agent" for item in preview["changes"]))
+            sync.commit(opened["session_id"], resolutions={})
+            receipt = sync.publish(opened["session_id"], destination_path="D:/drafts/demo-rebuilt")
+            self.assertTrue(any(item["op"] == "remove" for item in receipt["patches"]))
+            self.assertEqual(2, sum(item["op"] == "insert" for item in receipt["patches"]))
 
     def test_manual_trim_commits_without_treating_derived_duration_as_a_project_field(self) -> None:
         with TemporaryDirectory() as directory:

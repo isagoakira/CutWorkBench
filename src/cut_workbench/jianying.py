@@ -204,13 +204,19 @@ def _normalize_draft(native: Mapping[str, Any], *, adapter_id: str) -> dict[str,
             if not isinstance(values, list):
                 continue
             kind = _material_kind(collection)
-            for item in values:
+            for material_index, item in enumerate(values):
                 if not isinstance(item, Mapping) or not isinstance(item.get("id"), str):
                     continue
                 materials[item["id"]] = {
                     "external_id": item["id"], "kind": kind,
                     "path": item.get("path") or item.get("lumi_hub_path"),
                     "native": copy.deepcopy(dict(item)),
+                    "collection_path": f"/materials/{collection}",
+                    "property_paths": {
+                        "path": f"/materials/{collection}/{material_index}/path",
+                        "duration": f"/materials/{collection}/{material_index}/duration",
+                        "material_name": f"/materials/{collection}/{material_index}/material_name",
+                    },
                 }
 
     tracks: dict[str, Any] = {}
@@ -243,6 +249,8 @@ def _normalize_draft(native: Mapping[str, Any], *, adapter_id: str) -> dict[str,
                 "speed": float(segment.get("speed", 1.0)),
                 "transform": copy.deepcopy(clip.get("transform", {})),
             }
+            material = materials.get(segment.get("material_id"), {})
+            properties["source_locator"] = material.get("path")
             prefix = f"/tracks/{track_index}/segments/{segment_index}"
             entities[segment_id] = {
                 "external_id": segment_id,
@@ -257,6 +265,7 @@ def _normalize_draft(native: Mapping[str, Any], *, adapter_id: str) -> dict[str,
                     "source_duration": f"{prefix}/source_timerange/duration",
                     "speed": f"{prefix}/speed",
                     "transform": f"{prefix}/clip/transform",
+                    "material_id": f"{prefix}/material_id",
                 },
                 "entity_path": prefix,
                 "native": copy.deepcopy(dict(segment)),

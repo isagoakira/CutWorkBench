@@ -63,6 +63,36 @@ class ProjectStoreTests(unittest.TestCase):
                         }],
                     )
 
+    def test_segment_can_keep_its_stable_identity_when_replaced_and_reordered(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = ProjectStore(Path(directory))
+            project = store.create_project(
+                project_id="replace", title="Replace", canvas={"width": 1, "height": 1, "fps": 1}
+            )
+            project = store.apply_plan(
+                project_id="replace", expected_revision=1, actor="test", reason="setup",
+                operations=[
+                    {"op": "register_source", "source_id": "SRC-A", "locator": "a.mp4"},
+                    {"op": "register_source", "source_id": "SRC-B", "locator": "b.mp4"},
+                    {"op": "add_track", "track_id": "V1", "kind": "video"},
+                    {"op": "add_track", "track_id": "V2", "kind": "video"},
+                    {"op": "add_segment", "segment_id": "SEG-FINAL", "source_id": "SRC-A", "track_id": "V1",
+                     "source_in": 0, "source_out": 5, "timeline_start": 10, "role": "final"},
+                ],
+            )
+            updated = store.apply_plan(
+                project_id="replace", expected_revision=project["revision"], actor="test", reason="choose option",
+                operations=[{"op": "update_segment", "segment_id": "SEG-FINAL", "changes": {
+                    "source_id": "SRC-B", "track_id": "V2", "source_in": 1, "source_out": 4,
+                    "timeline_start": 2, "role": "optional-final",
+                }}],
+            )
+            segment = updated["segments"]["SEG-FINAL"]
+            self.assertEqual("SRC-B", segment["source_id"])
+            self.assertEqual("V2", segment["track_id"])
+            self.assertEqual((1.0, 4.0, 2.0), (segment["source_in"], segment["source_out"], segment["timeline_start"]))
+            self.assertEqual("optional-final", segment["role"])
+
     def test_plan_application_creates_immutable_revision_and_preserves_source_provenance(self) -> None:
         with TemporaryDirectory() as directory:
             store = ProjectStore(Path(directory))

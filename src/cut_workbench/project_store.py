@@ -219,11 +219,29 @@ class ProjectStore:
         changes = operation.get("changes")
         if not isinstance(changes, Mapping) or not changes:
             raise ValidationError("update_segment changes must be a non-empty object")
-        allowed = {"source_in", "source_out", "timeline_start", "speed", "transform"}
+        # A segment ID identifies the editorial object, not a particular source
+        # file or lane.  Keeping that identity while changing its source or track
+        # is what makes a replacement/reorder reviewable across revisions.
+        allowed = {
+            "source_id", "track_id", "source_in", "source_out", "timeline_start",
+            "speed", "transform", "role",
+        }
         unknown = set(changes) - allowed
         if unknown:
             raise ValidationError(f"unsupported segment changes: {sorted(unknown)}")
         segment = project["segments"][segment_id]
+        replacement_source = changes.get("source_id", segment["source_id"])
+        replacement_track = changes.get("track_id", segment["track_id"])
+        if replacement_source not in project["sources"]:
+            raise ValidationError(f"unknown source: {replacement_source}")
+        if replacement_track not in project["tracks"]:
+            raise ValidationError(f"unknown track: {replacement_track}")
+        if project["tracks"][replacement_track]["kind"] not in {"video", "audio", "sticker"}:
+            raise ValidationError("source segments may only target video, audio, or sticker tracks")
+        if replacement_track != segment["track_id"] and any(
+            control["target_segment_id"] == segment_id for control in project["controls"].values()
+        ):
+            raise ValidationError("cannot move a segment with attached controls; move its controls first")
         for key, value in changes.items():
             segment[key] = copy.deepcopy(value)
         if segment["source_in"] < 0 or segment["source_out"] <= segment["source_in"]:

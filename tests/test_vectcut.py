@@ -7,11 +7,77 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from cut_workbench.project_store import ProjectStore
-from cut_workbench.vectcut import VectCutCompiler, VectCutExecutor, VectCutHttpTransport
+from cut_workbench.app import WorkbenchApp
+from cut_workbench.config import load_vectcut_config
+from cut_workbench.vectcut import VectCutCompiler, VectCutExecutor, VectCutHttpTransport, default_vectcut_draft_folder
 from cut_workbench.errors import ValidationError
 
 
 class VectCutCompilerTests(unittest.TestCase):
+    def test_health_rejects_unrelated_http_service(self):
+        from unittest.mock import MagicMock
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b'{"status":"ok"}'
+        response.status = 200
+        with patch("cut_workbench.vectcut.request.urlopen", return_value=response):
+            self.assertFalse(VectCutHttpTransport().health()["reachable"])
+
+    def test_save_refuses_existing_destination(self):
+        with TemporaryDirectory() as directory:
+            (Path(directory) / "existing").mkdir()
+            with self.assertRaisesRegex(ValidationError, "overwrite"):
+                VectCutHttpTransport().call("save_draft", {"draft_id": "existing", "draft_folder": directory})
+
+    def test_transport_rejects_nested_save_failure(self):
+        from unittest.mock import MagicMock
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b'{"success":true,"output":{"success":false,"error":"save failed"}}'
+        with patch("cut_workbench.vectcut.request.urlopen", return_value=response):
+            with self.assertRaisesRegex(ValidationError, "save failed"):
+                VectCutHttpTransport().call("save_draft", {"draft_id": "d"})
+
+    def test_runtime_config_defaults_and_overrides_local_vectcut(self) -> None:
+        self.assertEqual("http://127.0.0.1:9001", load_vectcut_config(None)["base_url"])
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "runtime.json"
+            path.write_text(json.dumps({"vectcut": {
+                "base_url": "http://localhost:9100", "timeout": 30, "draft_folder": "/tmp/drafts"
+            }}), encoding="utf-8")
+            self.assertEqual(
+                {"base_url": "http://localhost:9100", "timeout": 30.0, "draft_folder": "/tmp/drafts"},
+                load_vectcut_config(path),
+            )
+
+    def test_default_draft_roots_are_platform_specific(self) -> None:
+        self.assertEqual(
+            Path("/Users/test/Movies/JianyingPro/User Data/Projects/com.lveditor.draft"),
+            default_vectcut_draft_folder("Darwin", Path("/Users/test")),
+        )
+        with patch.dict("os.environ", {"LOCALAPPDATA": "C:/Users/test/AppData/Local"}):
+            self.assertEqual(
+                Path("C:/Users/test/AppData/Local/JianyingPro/User Data/Projects/com.lveditor.draft"),
+                default_vectcut_draft_folder("Windows", Path("C:/Users/test")),
+            )
+
+    def test_app_executes_compiled_plan_through_local_transport(self) -> None:
+        class FakeTransport:
+            def call(self, tool, arguments):
+                return {"draft_id": "local-draft"} if tool == "create_draft" else {"ok": True}
+
+        with TemporaryDirectory() as directory:
+            app = WorkbenchApp(Path(directory), vectcut_transport=FakeTransport(), vectcut_draft_folder="/tmp/drafts")
+            app.call_tool("project.create", {"project_id": "local", "title": "Local", "canvas": {"width": 1, "height": 1, "fps": 30}})
+            app.call_tool("project.apply_plan", {"project_id": "local", "expected_revision": 1, "actor": "test", "reason": "add media", "operations": [
+                {"op": "register_source", "source_id": "SRC", "locator": "file:///tmp/test.mp4"},
+                {"op": "add_track", "track_id": "V1", "kind": "video", "purpose": "base"},
+                {"op": "add_segment", "segment_id": "SEG", "source_id": "SRC", "track_id": "V1", "source_in": 0, "source_out": 1, "timeline_start": 0},
+            ]})
+            result = app.call_tool("vectcut.execute", {"project_id": "local"})
+        self.assertEqual("completed", result["status"])
+        self.assertEqual("/tmp/drafts", result["draft_folder"])
+
     def test_http_transport_unwraps_vectcut_output_envelope(self) -> None:
         class Response:
             def __enter__(self):
