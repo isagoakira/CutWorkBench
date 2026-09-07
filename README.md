@@ -33,6 +33,17 @@ Cut Workbench 不试图再造一个非线性编辑器。它负责管理剪辑工
 
 安装脚本会创建隔离 Python 环境，配置本地 VectCutAPI、FFmpeg/ffprobe 和默认视觉验收包；它不会覆盖现有剪映草稿，也不会直接改 `draft_content.json`。剪映草稿目录自定义时，追加 `-JianyingDraftFolder 'D:\你的草稿目录'`。完整故障处理、日常启动/停止与兼容边界见 [Windows 本地剪映自动剪辑安装包](docs/windows-local-editing-setup.md)。
 
+## macOS / Linux 本地安装（含 WSL）
+
+macOS/Linux 用户可使用同一套无云端安装包：它安装隔离 Python 环境、本地 VectCutAPI、FFmpeg/ffprobe 与可选视觉验收包，并生成 Agent 的 stdio MCP 配置。macOS 在真实剪映专业版中完成最终草稿可打开/可播放验收；Linux 与 WSL 只验证本地服务、生成草稿文件和媒体链路，不声称具备原生剪映 GUI 验收能力。
+
+```bash
+bash ./scripts/posix/install-local-editing.sh --install-prerequisites --start-service
+bash ./scripts/posix/doctor-local-editing.sh
+```
+
+Linux/WSL 必须显式提供一个已有、可写的剪映草稿目录；默认安装状态目录为 `${XDG_STATE_HOME:-$HOME/.local/state}/cut-workbench`，macOS 为 `~/Library/Application Support/CutWorkbench`。完整安装、Ubuntu 22.04 的 Python 版本限制、日常启动/停止与冒烟验收见 [macOS / Linux 本地剪映自动剪辑安装包](docs/posix-local-editing-setup.md)。
+
 ## 为什么需要它
 
 常见的 AI 剪辑工具要么绑定订阅服务，要么只输出成片，要么把 Agent、模型和编辑器耦合在一起。Cut Workbench 把这些职责拆开：
@@ -187,7 +198,7 @@ cut-workbench --root D:/cut-runtime mcp
 
 Cut Workbench 默认使用 `http://127.0.0.1:9001`，只接受本机回环地址，不会调用 `open.vectcut.com`，也不要求 `VECTCUT_API_KEY`。先在与剪映同一台机器上部署开源 VectCutAPI：
 
-Windows 普通用户应优先使用上面的 `scripts/windows/install-local-editing.ps1`，而不是手动执行本节的开发者命令。该安装包固定了已实测的上游提交、剪映草稿 profile、服务启动和 `doctor` 自检。
+Windows 普通用户应优先使用上面的 `scripts/windows/install-local-editing.ps1`，macOS/Linux 用户应优先使用 `bash scripts/posix/install-local-editing.sh`，而不是手动执行本节的开发者命令。两套安装包都会固定已实测的上游提交、剪映草稿 profile、服务启动和 `doctor` 自检。
 
 ```powershell
 git clone https://github.com/sun-guannan/VectCutAPI.git D:/tools/VectCutAPI
@@ -420,6 +431,7 @@ cut-workbench --root D:/cut-runtime `
 
 - [完整使用教程](docs/usage-guide.md)
 - [Windows 本地剪映自动剪辑安装包](docs/windows-local-editing-setup.md)
+- [macOS / Linux 本地剪映自动剪辑安装包](docs/posix-local-editing-setup.md)
 - [架构与稳定边界](docs/architecture.md)
 - [实现规格与非目标](docs/spec.md)
 - [剪映双向同步](docs/jianying-sync.md)

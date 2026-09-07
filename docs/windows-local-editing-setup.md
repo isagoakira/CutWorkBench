@@ -94,5 +94,5 @@ PowerShell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\install-lo
 
 - 自动建稿固定使用实测的 VectCutAPI 提交 `d14e70749c9331424ab816a402bb45417c50cf68` 和 `jianying_pro_10` 草稿模板。
 - 因剪映版本和草稿格式可能变化，首次安装必须运行上面的真实草稿验收。
-- 这是一条 Windows-first 路线；macOS 仍可按仓库主 README 的本地部署说明配置，但暂不承诺一键安装脚本。
+- macOS/Linux 请使用 [macOS / Linux 本地剪映自动剪辑安装包](posix-local-editing-setup.md)；其中 WSL 只验证 Linux 服务与草稿文件，不能替代 macOS/Windows 剪映 GUI 验收。
 - 不包含 ASR、TTS、云渲染或 AI 特效；它们是独立的可选能力，不是本地静音屏录剪辑的前置条件。
