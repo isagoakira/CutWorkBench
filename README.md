@@ -6,6 +6,33 @@ Cut Workbench 不试图再造一个非线性编辑器。它负责管理剪辑工
 
 核心目标只有一个：**自动化完成后，人工仍能回到轨道、片段、字幕、效果和原生工程中继续修改。**
 
+## 先跑起来：Windows + 剪映专业版
+
+适用于“已有剪映专业版，希望让任意支持 stdio MCP 的 Agent 在本机创建可编辑草稿、渲染审阅版、检查音视频流”的用户。全程只使用本机 `127.0.0.1`，不需要云端 VectCut Key，不包含 ASR。
+
+1. 下载或克隆本仓库；安装并至少打开一次剪映专业版。
+2. 在仓库根目录打开 PowerShell，运行一次安装：
+
+   ```powershell
+   PowerShell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\install-local-editing.ps1 `
+     -InstallPrerequisites `
+     -StartService
+   ```
+
+3. 验证本机服务、剪映草稿目录、FFmpeg/ffprobe 与视觉验收包：
+
+   ```powershell
+   .\scripts\windows\doctor-local-editing.ps1
+   ```
+
+4. 将安装生成的 `%LOCALAPPDATA%\CutWorkbench\agent-mcp-config.json` 中 `cut-workbench` 条目导入 Agent 配置。首次使用前，对一个至少 6 秒的本地视频执行一次真实草稿验收：
+
+   ```powershell
+   .\scripts\windows\smoke-local-editing.ps1 -Source 'D:\videos\demo.mp4'
+   ```
+
+安装脚本会创建隔离 Python 环境，配置本地 VectCutAPI、FFmpeg/ffprobe 和默认视觉验收包；它不会覆盖现有剪映草稿，也不会直接改 `draft_content.json`。剪映草稿目录自定义时，追加 `-JianyingDraftFolder 'D:\你的草稿目录'`。完整故障处理、日常启动/停止与兼容边界见 [Windows 本地剪映自动剪辑安装包](docs/windows-local-editing-setup.md)。
+
 ## 为什么需要它
 
 常见的 AI 剪辑工具要么绑定订阅服务，要么只输出成片，要么把 Agent、模型和编辑器耦合在一起。Cut Workbench 把这些职责拆开：
@@ -62,7 +89,7 @@ Workbench revision 是唯一真相源。外部编辑器是协作者；VectCut �
 - 其他本地模型或分析器通过 JSON stdin/stdout sidecar 接入。
 - 外部编辑器同步需要对应的本地编辑器和适配器组件。
 
-## 安装
+## 开发者安装
 
 ```powershell
 git clone git@github.com:isagoakira/CutWorkBench.git
@@ -160,6 +187,8 @@ cut-workbench --root D:/cut-runtime mcp
 
 Cut Workbench 默认使用 `http://127.0.0.1:9001`，只接受本机回环地址，不会调用 `open.vectcut.com`，也不要求 `VECTCUT_API_KEY`。先在与剪映同一台机器上部署开源 VectCutAPI：
 
+Windows 普通用户应优先使用上面的 `scripts/windows/install-local-editing.ps1`，而不是手动执行本节的开发者命令。该安装包固定了已实测的上游提交、剪映草稿 profile、服务启动和 `doctor` 自检。
+
 ```powershell
 git clone https://github.com/sun-guannan/VectCutAPI.git D:/tools/VectCutAPI
 Set-Location D:/tools/VectCutAPI
@@ -214,7 +243,7 @@ cut-workbench --root D:/cut-runtime --config D:/cut-config/runtime-config.json c
 真实媒体冒烟测试（素材至少 6 秒；生成两段带入点的剪辑，并验证素材 SHA-256）：
 
 ```bash
-PYTHONPATH=src python scripts/smoke_vectcut.py --source /path/to/video.mov --root /path/to/smoke-runtime
+PYTHONPATH=src python scripts/smoke_vectcut.py --source /path/to/video.mov --root /path/to/smoke-runtime --draft-folder /path/to/jianying-drafts
 ```
 
 ## 接入 Agent
@@ -390,6 +419,7 @@ cut-workbench --root D:/cut-runtime `
 ## 文档
 
 - [完整使用教程](docs/usage-guide.md)
+- [Windows 本地剪映自动剪辑安装包](docs/windows-local-editing-setup.md)
 - [架构与稳定边界](docs/architecture.md)
 - [实现规格与非目标](docs/spec.md)
 - [剪映双向同步](docs/jianying-sync.md)
