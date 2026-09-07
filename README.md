@@ -85,6 +85,35 @@ $env:PYTHONPATH = 'src'
 python -m cut_workbench.cli --root D:/cut-runtime list-tools
 ```
 
+## 配置决议与调用链
+
+`runtime-config.json` 是一个合并配置：同一文件可同时声明本地 capability provider、routing policy 和本机 VectCutAPI。它不是三个互相覆盖的配置文件。最小的 VectCut 配置如下；即使文件里只有 `vectcut`，Workbench 仍会保留默认 `ffprobe` provider。
+
+```json
+{
+  "vectcut": {
+    "base_url": "http://127.0.0.1:9001",
+    "timeout": 120,
+    "draft_folder": "E:/JianYing/JianyingPro Drafts"
+  }
+}
+```
+
+配置文件的选择顺序是：显式 `--config <path>` → `<root>/runtime-config.json`（仅在未传 `--config` 时自动加载）→ 内置默认值。选定文件内，VectCut 地址的优先级为 `--vectcut-url` → `vectcut.base_url` → `CUT_WORKBENCH_VECTCUT_URL` → `http://127.0.0.1:9001`；草稿目录的优先级为 `--vectcut-draft-folder` → `vectcut.draft_folder` → 平台默认的剪映草稿根目录。`--config` 不会合并另一份文件。
+
+VectCut 地址必须是 `localhost`、`127.0.0.1` 或 `::1` 等本机回环 HTTP(S) 服务；该限制保证 `vectcut.execute` 不会悄悄切换到云端。完整字段、配置样例与故障定位见 [运行时配置](docs/runtime-configuration.md)。
+
+```text
+--config / <root>/runtime-config.json
+              │
+              ├─ providers + routing ──→ capability.request
+Agent / CLI ──┼─ vectcut endpoint ─────→ vectcut.health → compile → execute → 新剪映草稿
+  stdio MCP   │
+              └─ editor settings ──────→ sync.open → preview → commit → publish / apply
+                       │
+                 project.inspect → project.apply_plan → verify → manifest
+```
+
 ## 本地部署
 
 Workbench 核心不需要 Docker、数据库、Web 服务或本地 LLM。它作为一个本地 Python 进程运行，并通过 stdio MCP 与 Agent 通信；项目 revision、journal、能力任务和编辑器同步会话都保存在 `--root` 指定的运行目录。
@@ -129,7 +158,7 @@ cut-workbench --root D:/cut-runtime mcp
 
 ### 本地 VectCutAPI（默认自动建稿通道）
 
-Cut Workbench 默认使用 `http://127.0.0.1:9001`，不会调用 `open.vectcut.com`，也不要求 `VECTCUT_API_KEY`。先在与剪映同一台机器上部署开源 VectCutAPI：
+Cut Workbench 默认使用 `http://127.0.0.1:9001`，只接受本机回环地址，不会调用 `open.vectcut.com`，也不要求 `VECTCUT_API_KEY`。先在与剪映同一台机器上部署开源 VectCutAPI：
 
 ```powershell
 git clone https://github.com/sun-guannan/VectCutAPI.git D:/tools/VectCutAPI
@@ -170,7 +199,7 @@ python /path/to/CutWorkBench/scripts/serve_vectcut.py --repo ~/tools/VectCutAPI
 }
 ```
 
-保存为运行目录 `--root` 下的 `runtime-config.json` 后会自动加载；也可用 `--config` 显式指定其他文件：
+保存为运行目录 `--root` 下的 `runtime-config.json` 后会自动加载；也可用 `--config` 显式指定其他文件。该文件可以同时放入 `providers` 和 `routing`，完整格式见 [运行时配置](docs/runtime-configuration.md)：
 
 ```powershell
 cut-workbench --root D:/cut-runtime --config D:/cut-config/runtime-config.json call vectcut.health '{}'
@@ -205,7 +234,7 @@ PYTHONPATH=src python scripts/smoke_vectcut.py --source /path/to/video.mov --roo
 }
 ```
 
-如果需要本地 Whisper、镜头检测或自定义 TTS sidecar，在启动参数中增加 `--config D:/cut-config/runtime-config.json`。配置结构见 [examples/runtime-config.json](examples/runtime-config.json)。任何实现“一条 JSON 请求从 stdin 输入、一条 JSON 结果从 stdout 输出”的程序都能作为 `json-command` provider，不需要修改 Workbench 核心。
+如果需要本地 Whisper、镜头检测或自定义 TTS sidecar，在启动参数中增加 `--config D:/cut-config/runtime-config.json`。配置结构见 [运行时配置](docs/runtime-configuration.md) 和 [examples/runtime-config.json](examples/runtime-config.json)。任何实现“一条 JSON 请求从 stdin 输入、一条 JSON 结果从 stdout 输出”的程序都能作为 `json-command` provider，不需要修改 Workbench 核心。
 
 ## 核心工作流
 
@@ -218,7 +247,8 @@ project.inspect → project.apply_plan → new revision
       ↓
 project.verify → project.manifest
       ↓
-sync.open → sync.preview → sync.commit → sync.publish clone
+├─ vectcut.health → vectcut.compile → vectcut.execute（新可编辑草稿）
+└─ sync.open → sync.preview → sync.commit → sync.publish clone / sync.apply live
 ```
 
 关键规则：
@@ -240,9 +270,11 @@ sync.open → sync.preview → sync.commit → sync.publish clone
 | --- | --- |
 | 工程 | `project.create`、`project.inspect`、`project.apply_plan`、`project.branch` |
 | 验证 | `project.verify`、`project.manifest` |
+| 生产工作流 | `workflow.contract`、`workflow.status` |
 | 能力 | `capability.request`、`capability.pending`、`capability.submit` |
+| 生成编排 | `generation.contract`、`generation.request`、`generation.pending`、`generation.reconciliation`、`generation.claim`、`generation.heartbeat`、`generation.approve`、`generation.authorize`、`generation.submit` |
 | 本地 VectCut | `vectcut.health`、`vectcut.compile`、`vectcut.execute` |
-| 外部编辑器 | `sync.open`、`sync.preview`、`sync.commit`、`sync.publish` |
+| 外部编辑器 | `sync.open`、`sync.preview`、`sync.commit`、`sync.publish`、`sync.apply` |
 
 用 `cut-workbench --root D:/cut-runtime list-tools` 可获取完整 JSON Schema。
 
@@ -361,6 +393,7 @@ cut-workbench --root D:/cut-runtime `
 - [实现规格与非目标](docs/spec.md)
 - [剪映双向同步](docs/jianying-sync.md)
 - [Premiere / After Effects 本机桥接](docs/adobe-local-bridge.md)
+- [运行时配置与调用链](docs/runtime-configuration.md)
 - [PR / AE 开源方案调研](docs/premiere-after-effects-open-source-research.md)
 - [运行时配置示例](examples/runtime-config.json)
 - [编辑计划示例](examples/edit-plan.json)

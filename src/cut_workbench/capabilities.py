@@ -55,6 +55,7 @@ class RoutingPolicy:
         return cls(
             rules={
                 "media.probe": {"standard": "local", "high": "local"},
+                "audio.synthesize.tts": {"standard": "local", "high": "local"},
                 "audio.transcribe.words": {"standard": "local", "high": "agent"},
                 "audio.detect.silence": {"standard": "local", "high": "local"},
                 "audio.detect.beats": {"standard": "local", "high": "agent"},

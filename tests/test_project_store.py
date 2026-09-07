@@ -220,6 +220,37 @@ class ProjectStoreTests(unittest.TestCase):
                     ],
                 )
 
+    def test_caption_timing_can_move_without_replacing_its_stable_id_and_empty_track_can_be_removed(self) -> None:
+        with TemporaryDirectory() as directory:
+            store = ProjectStore(Path(directory))
+            project = store.create_project(
+                project_id="trim", title="Trim", canvas={"width": 1, "height": 1, "fps": 1}
+            )
+            project = store.apply_plan(
+                project_id="trim", expected_revision=1, actor="test", reason="assemble",
+                operations=[
+                    {"op": "register_source", "source_id": "SRC", "locator": "source.mp4"},
+                    {"op": "add_track", "track_id": "V1", "kind": "video"},
+                    {"op": "add_track", "track_id": "V2-EMPTY", "kind": "video"},
+                    {"op": "add_track", "track_id": "C1", "kind": "caption"},
+                    {"op": "add_segment", "segment_id": "SEG", "source_id": "SRC", "track_id": "V1",
+                     "source_in": 0, "source_out": 4, "timeline_start": 0},
+                    {"op": "add_caption", "caption_id": "CAP", "track_id": "C1", "start": 0, "end": 1,
+                     "text": "chapter"},
+                ],
+            )
+
+            updated = store.apply_plan(
+                project_id="trim", expected_revision=project["revision"], actor="test", reason="tighten cut",
+                operations=[
+                    {"op": "update_caption", "caption_id": "CAP", "changes": {"start": 1, "end": 2}},
+                    {"op": "remove_track", "track_id": "V2-EMPTY"},
+                ],
+            )
+
+        self.assertEqual((1, 2), (updated["captions"]["CAP"]["start"], updated["captions"]["CAP"]["end"]))
+        self.assertNotIn("V2-EMPTY", updated["tracks"])
+
     def test_handoff_freezes_project_and_branch_remains_editable(self) -> None:
         with TemporaryDirectory() as directory:
             store = ProjectStore(Path(directory))

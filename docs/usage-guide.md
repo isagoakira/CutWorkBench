@@ -118,6 +118,8 @@ cut-workbench --root $workbenchRoot call capability.request $probeRequest
 cut-workbench --root $workbenchRoot --config D:/cut-config/runtime-config.json mcp
 ```
 
+`--config` 是合并配置，不会因只填写 `vectcut`、`routing` 或一个 sidecar 而移除默认 `ffprobe`。同一文件也可配置 VectCutAPI；配置文件选择、字段优先级和本机回环限制见 [运行时配置](runtime-configuration.md)。
+
 ### sidecar 协议
 
 `json-command` provider 向程序 stdin 写入一个 request JSON。sidecar 必须向 stdout 只写一个结果对象：
@@ -218,6 +220,10 @@ cut-workbench --root $workbenchRoot call project.apply_plan $plan
 
 如果其他调用者已产生新 revision，旧 `expected_revision` 会被拒绝。重新 inspect、理解差异，再构造下一份计划；不要盲目重试。
 
+### 轨道预算
+
+轨道不是片段容器，而是同时出现、需要独立调整的编辑角色。屏录默认使用一条 base 视频轨；静音交付不建音频轨；字幕、旁白、音乐或注释只在确实需要独立时间线时增加各自的一条轨。顺序片段必须复用既有轨道。详见 [保守轨道策略](track-usage-policy.md)。
+
 ## 6. 添加效果并保持可拆分
 
 同轨 Transform、Mask、Mask Blur、Keyframe 使用 `add_control`；独立效果使用 `effect` track：
@@ -239,6 +245,8 @@ cut-workbench --root $workbenchRoot call project.apply_plan $plan
 
 若目标平台无法保留某项能力，不要静默烘焙。先用 `record_downgrade` 保存原因、fallback 和批准者，再让 baked control 引用 `approved_exception_id`。
 
+需要压紧剪辑时，使用 `update_segment` 和 `update_caption` 保持既有稳定 ID；确认轨道内没有片段、控件或字幕后，使用 `remove_track` 清理空轨。不要删除再重建同一逻辑对象，更不要为每块覆盖或每个片段新增一条轨道。
+
 ## 7. 验证和 Manifest
 
 ```powershell
@@ -257,6 +265,8 @@ cut-workbench --root $workbenchRoot call project.manifest '{"project_id":"tutori
 Manifest 直接来自同一 revision，包含来源、粗剪映射、控件、字幕、决策、降级和验证状态。
 
 ## 8. 编译 VectCut 计划
+
+先确认 `vectcut` 配置指向本机回环服务，并对实际草稿目录设置 `draft_folder` 或 `--vectcut-draft-folder`。运行目录内的 `runtime-config.json` 会自动加载；使用其他位置的文件时必须传入 `--config`。完整配置示例见 [运行时配置](runtime-configuration.md)。
 
 ```powershell
 cut-workbench --root $workbenchRoot call vectcut.compile '{"project_id":"tutorial-01","draft_folder":"D:/drafts/tutorial-01"}'
