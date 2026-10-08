@@ -36,29 +36,29 @@ python -m cut_workbench.cli `
 
 The typed bidirectional writer covers A/V segment timeline position, source in/out, speed, transform, and the timeline duration derived from those fields. Source out is translated to Jianying's source duration representation; an independently stretched duration that cannot be represented by source range and speed is rejected explicitly. Manual segment deletion is supported; Agent-originated deletion is currently rejected rather than flattened. Other native objects and future fields survive as opaque JSON but are not yet directly editable through Workbench operations.
 
-## 已打开剪映的增量应用
+## Incremental updates to an open Jianying editor
 
-`jianying:live-local` 是与文件草稿适配器分离的本地桥接适配器。它不调用 `jy-draftc`，也不修改 `draft_content.json`；剪映侧桥接负责读取当前打开时间线、执行命令并返回快照。
+`jianying:live-local` is a local bridge adapter separate from the file-draft adapter. It neither calls `jy-draftc` nor modifies `draft_content.json`; the Jianying-side bridge reads the open timeline, executes commands, and returns snapshots.
 
-一次剪映会话内的操作顺序是 `sync.open → sync.preview → sync.commit → sync.apply`。`sync.apply` 不创建克隆草稿，且每次命令包含基线 `fingerprint`、严格白名单的 `set` 补丁和请求 ID。桥接只有在本地授权文件的 `live_apply_enabled: true` 时才能执行，并必须回传精确的补丁列表和更新后的快照；任意指纹不一致都会拒绝。
+Within one editor session, use `sync.open → sync.preview → sync.commit → sync.apply`. `sync.apply` creates no clone. Each command includes a baseline `fingerprint`, strict allowlisted `set` patches, and request ID. Execution requires `live_apply_enabled: true` in local authorization and a receipt containing the exact patch list and updated snapshot. Any fingerprint mismatch is rejected.
 
-通过 CLI 配置桥接时，必须固定其 profile SHA-256 和剪映版本：
+CLI bridge configuration requires pinned profile SHA-256 and Jianying version:
 
 ```powershell
-python -m cut_workbench.cli --root <工作台目录> `
-  --jianying-live-bridge-root <剪映侧桥接目录> `
-  --jianying-live-profile-sha256 <profile.json的SHA-256> `
+python -m cut_workbench.cli --root <workbench-directory> `
+  --jianying-live-bridge-root <jianying-side-bridge-directory> `
+  --jianying-live-profile-sha256 <profile-json-sha256> `
   --jianying-live-version 11.3.0.14362 mcp
 ```
 
-桥接目录由剪映侧宿主维护：`profile.json`、`snapshot.json`、`authorization.json`、`commands/` 与 `responses/`。Cut Workbench 仅写入 `commands/` 并校验 `responses/`；它不把文件协议当成对打开草稿的写入许可。当前安装包未发现可验证的官方剪映扩展入口，因此必须先由受控的剪映侧本地桥接接入后，才可对真实打开时间线启用该适配器。
+The Jianying-side host maintains `profile.json`, `snapshot.json`, `authorization.json`, `commands/`, and `responses/`. Cut Workbench only writes commands and validates responses; the file protocol does not authorize writing open drafts. The current installer has not identified a verifiable official Jianying extension entry point. A controlled local Jianying-side bridge must connect before enabling this adapter on a real open timeline.
 
-## 无痛验收切换（当前默认路线）
+## Low-friction acceptance switching: current default path
 
-没有实时宿主桥接时，不要在每次新需求后切换剪映。保持剪映打开，连续将需求写入 Workbench revision；当需要验收时，完成一次 `sync.open → sync.preview → sync.commit` 后保存并关闭剪映，再调用：
+Without a live host bridge, do not switch Jianying after every new request. Keep it open while recording requests as Workbench revisions. At acceptance, complete `sync.open → sync.preview → sync.commit`, save and close Jianying, then call:
 
 ```json
-{"session_id":"<已提交会话>","reopen_editor":true}
+{"session_id":"<committed-session>","reopen_editor":true}
 ```
 
-`sync.publish` 会在剪映退出后生成并注册最新命名副本，再自动启动 `JianyingPro.exe`。它不会主动关闭正在编辑的剪映，也不会猜测未公开的“打开指定草稿”命令行参数；重新启动后人工在草稿库选择最新副本即可。若没有关闭剪映，发布仍会明确拒绝。
+After Jianying exits, `sync.publish` creates and registers the latest named copy and launches `JianyingPro.exe`. It does not close an actively edited application or guess unpublished “open specific draft” arguments. Select the latest copy in the draft library after relaunch. Publication still refuses explicitly if Jianying remains open.
