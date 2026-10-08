@@ -1,17 +1,17 @@
 # Cut Workbench
 
-本地优先、Agent 中立、以可编辑工程为核心的视频剪辑控制层。
+A local-first, agent-neutral video editing control layer built around editable projects.
 
-Cut Workbench 不试图再造一个非线性编辑器。它负责管理剪辑工程的版本、稳定 ID、证据、冲突、验证和交接，再通过 MCP 把 Codex、Claude 或其他 Agent 接到本地分析工具、剪映、Premiere Pro、After Effects 和本地 VectCutAPI。
+Cut Workbench manages project versions, stable IDs, evidence, conflicts, verification, and handoff. Through MCP, it connects Codex, Claude, or other agents to local analysis tools, Jianying, Premiere Pro, After Effects, and local VectCutAPI, without trying to rebuild a nonlinear editor.
 
-核心目标只有一个：**自动化完成后，人工仍能回到轨道、片段、字幕、效果和原生工程中继续修改。**
+Its core goal: **after automation, people can still edit tracks, segments, captions, effects, and native projects.**
 
-## 先跑起来：Windows + 剪映专业版
+## Quick start: Windows + Jianying Pro
 
-适用于“已有剪映专业版，希望让任意支持 stdio MCP 的 Agent 在本机创建可编辑草稿、渲染审阅版、检查音视频流”的用户。全程只使用本机 `127.0.0.1`，不需要云端 VectCut Key，不包含 ASR。
+For users who already have Jianying Pro and want any stdio MCP agent to create local editable drafts, render review versions, and inspect audio/video streams. The entire path uses local `127.0.0.1`, requires no cloud VectCut key, and excludes ASR.
 
-1. 下载或克隆本仓库；安装并至少打开一次剪映专业版。
-2. 在仓库根目录打开 PowerShell，运行一次安装：
+1. Download or clone this repository; install and open Jianying Pro at least once.
+2. Open PowerShell in the repository root and run the installer once:
 
    ```powershell
    PowerShell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\install-local-editing.ps1 `
@@ -19,63 +19,63 @@ Cut Workbench 不试图再造一个非线性编辑器。它负责管理剪辑工
      -StartService
    ```
 
-3. 验证本机服务、剪映草稿目录、FFmpeg/ffprobe 与视觉验收包：
+3. Check the local service, Jianying draft directory, FFmpeg/ffprobe, and visual acceptance package:
 
    ```powershell
    .\scripts\windows\doctor-local-editing.ps1
    ```
 
-4. 将安装生成的 `%LOCALAPPDATA%\CutWorkbench\agent-mcp-config.json` 中 `cut-workbench` 条目导入 Agent 配置。首次使用前，对一个至少 6 秒的本地视频执行一次真实草稿验收：
+4. Import the `cut-workbench` entry from the generated `%LOCALAPPDATA%\CutWorkbench\agent-mcp-config.json` into your agent configuration. Before first use, run a real draft acceptance check with a local video at least 6 seconds long:
 
    ```powershell
    .\scripts\windows\smoke-local-editing.ps1 -Source 'D:\videos\demo.mp4'
    ```
 
-安装脚本会创建隔离 Python 环境，配置本地 VectCutAPI、FFmpeg/ffprobe 和默认视觉验收包；它不会覆盖现有剪映草稿，也不会直接改 `draft_content.json`。剪映草稿目录自定义时，追加 `-JianyingDraftFolder 'D:\你的草稿目录'`。完整故障处理、日常启动/停止与兼容边界见 [Windows 本地剪映自动剪辑安装包](docs/windows-local-editing-setup.md)。
+The installer creates an isolated Python environment and configures local VectCutAPI, FFmpeg/ffprobe, and the default visual acceptance package. It does not overwrite existing Jianying drafts or directly modify `draft_content.json`. For a custom draft directory, add `-JianyingDraftFolder 'D:\your-draft-directory'`. See [Windows local Jianying editing setup](docs/windows-local-editing-setup.md) for troubleshooting, daily startup/shutdown, and compatibility boundaries.
 
-## macOS / Linux 本地安装（含 WSL）
+## macOS / Linux installation (including WSL)
 
-macOS/Linux 用户可使用同一套无云端安装包：它安装隔离 Python 环境、本地 VectCutAPI、FFmpeg/ffprobe 与可选视觉验收包，并生成 Agent 的 stdio MCP 配置。macOS 在真实剪映专业版中完成最终草稿可打开/可播放验收；Linux 与 WSL 只验证本地服务、生成草稿文件和媒体链路，不声称具备原生剪映 GUI 验收能力。
+The cloud-free installer creates an isolated Python environment, local VectCutAPI, FFmpeg/ffprobe, optional visual acceptance tools, and agent stdio MCP configuration. On macOS, final acceptance must verify opening and playback in actual Jianying Pro. Linux and WSL verify local services, generated draft files, and media processing only; they do not establish native Jianying GUI acceptance.
 
 ```bash
 bash ./scripts/posix/install-local-editing.sh --install-prerequisites --start-service
 bash ./scripts/posix/doctor-local-editing.sh
 ```
 
-Linux/WSL 必须显式提供一个已有、可写的剪映草稿目录；默认安装状态目录为 `${XDG_STATE_HOME:-$HOME/.local/state}/cut-workbench`，macOS 为 `~/Library/Application Support/CutWorkbench`。完整安装、Ubuntu 22.04 的 Python 版本限制、日常启动/停止与冒烟验收见 [macOS / Linux 本地剪映自动剪辑安装包](docs/posix-local-editing-setup.md)。
+Linux/WSL require an explicitly supplied, existing, writable Jianying draft directory. The default installation state directory is `${XDG_STATE_HOME:-$HOME/.local/state}/cut-workbench` on Linux/WSL and `~/Library/Application Support/CutWorkbench` on macOS. See [macOS / Linux local Jianying editing setup](docs/posix-local-editing-setup.md) for installation, Ubuntu 22.04 Python version restrictions, daily service management, and smoke acceptance.
 
-## 为什么需要它
+## Why it exists
 
-常见的 AI 剪辑工具要么绑定订阅服务，要么只输出成片，要么把 Agent、模型和编辑器耦合在一起。Cut Workbench 把这些职责拆开：
+Many AI editing tools depend on subscriptions, output only flattened videos, or couple the agent, model, and editor. Cut Workbench separates their responsibilities:
 
-- Agent 负责理解、判断、规划和高精度视觉任务。
-- Whisper、FFmpeg、ffprobe、PySceneDetect 等本地程序负责可重复的轻量任务。
-- Workbench 保存不可变 revision、稳定实体、审计证据和冲突决议。
-- 剪映、Premiere、AE 或 VectCut 保留真正可二次加工的工程结构。
-- 更换 Agent 平台或本地模型时，工程数据和 MCP 工具面保持不变。
+- Agents handle understanding, judgment, planning, and high-precision visual tasks.
+- Local programs such as Whisper, FFmpeg, ffprobe, and PySceneDetect handle reproducible lightweight tasks.
+- Workbench stores immutable revisions, stable entities, audit evidence, and conflict decisions.
+- Jianying, Premiere, AE, or VectCut retain project structures that people can edit further.
+- Project data and MCP tools remain stable when the agent platform or local model changes.
 
-## 当前能力
+## Current capabilities
 
-| 能力 | 当前状态 |
+| Capability | Status |
 | --- | --- |
-| 版本化工程、原子编辑计划、分支与不可变交接 | 可用 |
-| 命名视频/音频/字幕/效果/贴纸轨道 | 可用 |
-| 可分离片段、Transform、Mask、Keyframe、Effect 控件 | 可用 |
-| 本地/Agent capability 路由与持久化任务队列 | 可用 |
-| Cut Protocol 结构验证、视觉证据门禁、Manifest | 可用 |
-| 本地 VectCut 可编辑多轨草稿生成 | 默认启用；`vectcut.execute` 连接本机 `127.0.0.1:9001`，服务未启动则明确失败 |
-| 剪映专业版 11.3 双向三方同步 | 可用；需要外部 codec sidecar |
-| 已打开剪映的增量应用 | 可用桥接协议与 `sync.apply`；需接入受控的剪映侧本地桥接 |
-| Premiere Pro 2023 CEP 桥接 | 可用；当前 typed 写入范围为素材入点/出点 |
-| After Effects 2023 CEP 桥接 | 快照和 opaque 保留可用；typed layer 合并尚未完成 |
-| Dynamic Link 结构化双向编辑 | 尚未完成，目前仅作为 opaque 原生关联保留 |
+| Versioned projects, atomic edit plans, branching, immutable handoff | Available |
+| Named video/audio/caption/effect/sticker tracks | Available |
+| Separable segments, Transform, Mask, Keyframe, Effect controls | Available |
+| Local/agent capability routing and persistent job queues | Available |
+| Cut Protocol structural verification, visual evidence gates, manifests | Available |
+| Local VectCut editable multitrack draft generation | Enabled by default; `vectcut.execute` connects to local `127.0.0.1:9001` and fails explicitly if the service is unavailable |
+| Jianying Pro 11.3 bidirectional three-way synchronization | Available; requires an external codec sidecar |
+| Incremental application to an open Jianying editor | Bridge protocol and `sync.apply` available; requires a controlled local bridge on the Jianying side |
+| Premiere Pro 2023 CEP bridge | Available; typed writes currently cover source in/out points |
+| After Effects 2023 CEP bridge | Snapshots and opaque preservation available; typed layer merging unfinished |
+| Structured bidirectional Dynamic Link editing | Unfinished; native relationships are currently preserved as opaque data |
 
-项目不捆绑模型权重、Adobe 软件、剪映 codec 或云端服务，也不要求本地 LLM。
+The project bundles no model weights, Adobe software, Jianying codec, or cloud services, and requires no local LLM.
 
-## 架构概览
+## Architecture overview
 
 ```text
-Codex / Claude / 其他 Agent
+Codex / Claude / other agents
              │
           MCP tools
              │
@@ -90,17 +90,17 @@ Codex / Claude / 其他 Agent
       └─ VectCut compile + local execution
 ```
 
-Workbench revision 是唯一真相源。外部编辑器是协作者；VectCut 是默认的本地可编辑草稿生成目标，渲染文件不是可编辑工程的替代品。
+Workbench revisions are the source of truth. External editors are collaborators. VectCut is the default local editable-draft target; rendered files do not replace editable projects.
 
-## 环境要求
+## Requirements
 
-- Python 3.11 或更高版本。
-- Windows PowerShell 示例可直接使用；核心 Python 代码没有第三方运行时依赖。
-- `ffprobe` 为默认本地媒体探测 provider，需要自行安装 FFmpeg 并加入 `PATH`。
-- 其他本地模型或分析器通过 JSON stdin/stdout sidecar 接入。
-- 外部编辑器同步需要对应的本地编辑器和适配器组件。
+- Python 3.11 or later.
+- Windows PowerShell examples can be used directly; core Python code has no third-party runtime dependencies.
+- `ffprobe` is the default local media probing provider. Install FFmpeg separately and add it to `PATH`.
+- Other local models and analyzers connect through JSON stdin/stdout sidecars.
+- External editor synchronization requires the corresponding local editor and adapter components.
 
-## 开发者安装
+## Developer installation
 
 ```powershell
 git clone git@github.com:isagoakira/CutWorkBench.git
@@ -110,22 +110,22 @@ python -m venv .venv
 python -m pip install -e .
 ```
 
-验证安装：
+Verify installation:
 
 ```powershell
 cut-workbench --root D:/cut-runtime list-tools
 ```
 
-也可以不安装包，直接从源码运行：
+Alternatively, run directly from source:
 
 ```powershell
 $env:PYTHONPATH = 'src'
 python -m cut_workbench.cli --root D:/cut-runtime list-tools
 ```
 
-## 配置决议与调用链
+## Configuration resolution and call chain
 
-`runtime-config.json` 是一个合并配置：同一文件可同时声明本地 capability provider、routing policy 和本机 VectCutAPI。它不是三个互相覆盖的配置文件。最小的 VectCut 配置如下；即使文件里只有 `vectcut`，Workbench 仍会保留默认 `ffprobe` provider。
+`runtime-config.json` is a combined configuration: a single file can declare local capability providers, routing policy, and local VectCutAPI settings. These are not three files that overwrite one another. The minimum VectCut configuration is below; Workbench retains its default `ffprobe` provider even if the file contains only `vectcut`.
 
 ```json
 {
@@ -137,36 +137,36 @@ python -m cut_workbench.cli --root D:/cut-runtime list-tools
 }
 ```
 
-配置文件的选择顺序是：显式 `--config <path>` → `<root>/runtime-config.json`（仅在未传 `--config` 时自动加载）→ 内置默认值。选定文件内，VectCut 地址的优先级为 `--vectcut-url` → `vectcut.base_url` → `CUT_WORKBENCH_VECTCUT_URL` → `http://127.0.0.1:9001`；草稿目录的优先级为 `--vectcut-draft-folder` → `vectcut.draft_folder` → 平台默认的剪映草稿根目录。`--config` 不会合并另一份文件。
+File selection order: explicit `--config <path>` → `<root>/runtime-config.json` (autoloaded only when `--config` is absent) → built-in defaults. Within the selected configuration, VectCut endpoint precedence is `--vectcut-url` → `vectcut.base_url` → `CUT_WORKBENCH_VECTCUT_URL` → `http://127.0.0.1:9001`. Draft directory precedence is `--vectcut-draft-folder` → `vectcut.draft_folder` → the platform's default Jianying draft root. `--config` does not merge a second file.
 
-VectCut 地址必须是 `localhost`、`127.0.0.1` 或 `::1` 等本机回环 HTTP(S) 服务；该限制保证 `vectcut.execute` 不会悄悄切换到云端。完整字段、配置样例与故障定位见 [运行时配置](docs/runtime-configuration.md)。
+VectCut endpoints must be local loopback HTTP(S) services such as `localhost`, `127.0.0.1`, or `::1`, so `vectcut.execute` cannot silently switch to the cloud. See [Runtime configuration](docs/runtime-configuration.md) for fields, examples, and troubleshooting.
 
 ```text
 --config / <root>/runtime-config.json
               │
               ├─ providers + routing ──→ capability.request
-Agent / CLI ──┼─ vectcut endpoint ─────→ vectcut.health → compile → execute → 新剪映草稿
+Agent / CLI ──┼─ vectcut endpoint ─────→ vectcut.health → compile → execute → new Jianying draft
   stdio MCP   │
               └─ editor settings ──────→ sync.open → preview → commit → publish / apply
                        │
                  project.inspect → project.apply_plan → verify → manifest
 ```
 
-## 本地部署
+## Local deployment
 
-Workbench 核心不需要 Docker、数据库、Web 服务或本地 LLM。它作为一个本地 Python 进程运行，并通过 stdio MCP 与 Agent 通信；项目 revision、journal、能力任务和编辑器同步会话都保存在 `--root` 指定的运行目录。
+The Workbench core needs no Docker, database, web service, or local LLM. It runs as a local Python process communicating with the agent through stdio MCP. Project revisions, journals, capability jobs, and editor sync sessions are stored in the runtime directory specified by `--root`.
 
-不要把运行目录放进源码目录。推荐把代码、运行状态、项目素材和本地工具分开：
+Keep the runtime directory outside the source checkout. Separate code, runtime state, project materials, and local tools:
 
 ```text
-D:/projects/CutWorkBench/     # 本仓库与 Python 虚拟环境
-D:/cut-runtime/               # revision、journal、capability-jobs、同步会话
-D:/video-projects/            # 原始素材、剪辑工程、字幕、交付文件
-D:/cut-config/                # runtime-config.json 等本机配置
-D:/tools/                     # Whisper、TTS、codec 等 sidecar
+D:/projects/CutWorkBench/     # Repository and Python virtual environment
+D:/cut-runtime/              # Revisions, journal, capability jobs, sync sessions
+D:/video-projects/           # Original media, editing projects, subtitles, deliverables
+D:/cut-config/               # Local configuration such as runtime-config.json
+D:/tools/                    # Whisper, TTS, codec, and other sidecars
 ```
 
-先创建运行目录并做健康检查：
+Create the runtime directory and run a health check:
 
 ```powershell
 $workbenchRoot = 'D:/cut-runtime'
@@ -174,31 +174,31 @@ New-Item -ItemType Directory -Force $workbenchRoot | Out-Null
 cut-workbench --root $workbenchRoot list-tools
 ```
 
-部署完成后，Workbench 不会监听网络端口；通常由 Agent 按需启动 stdio MCP：
+Workbench does not listen on a network port. Agents usually start stdio MCP on demand:
 
 ```powershell
 cut-workbench --root D:/cut-runtime mcp
 ```
 
-### 按需追加本地组件
+### Add local components as needed
 
-| 组件 | 是否必需 | 接入方式 |
+| Component | Required? | Integration |
 | --- | --- | --- |
-| FFmpeg / `ffprobe` | 推荐 | 安装 FFmpeg 并加入 `PATH`；用于本地媒体探测。 |
-| Whisper、镜头/静音/节拍检测 | 可选 | 作为 `json-command` sidecar 写入运行时配置。 |
-| GPT-SoVITS、CosyVoice 等 TTS | 可选 | 使用 `audio.synthesize.tts` sidecar；见下方 TTS 配置。 |
-| 剪映专业版 | 可选 | 额外提供本机 codec sidecar，并固定 codec 版本与 SHA-256。 |
-| Premiere Pro / After Effects | 可选 | 安装仓库提供的 CEP 面板和本机文件桥；先做快照/preview，再允许克隆发布。 |
-| TapNow | 可选 | 将已锁定的脚本、分镜和素材计划编译为 Canvas 节点、Ask-mode 执行简报和网页端交接包；由 TapNow Agent 在网页内执行，不调用未公开接口。 |
-| VectCutAPI | 必需（自动建稿） | 本地启动于 `127.0.0.1:9001`；Workbench 默认编译并执行可编辑草稿写入。 |
+| FFmpeg / `ffprobe` | Recommended | Install FFmpeg and add it to `PATH` for local media probing. |
+| Whisper, shot/silence/beat detection | Optional | Configure as `json-command` sidecars. |
+| GPT-SoVITS, CosyVoice, other TTS | Optional | Use an `audio.synthesize.tts` sidecar; see below. |
+| Jianying Pro | Optional | Supply a local codec sidecar and pin its version and SHA-256. |
+| Premiere Pro / After Effects | Optional | Install the supplied CEP panels and local file bridge; snapshot/preview before authorizing clone publication. |
+| TapNow | Optional | Compile locked scripts, storyboards, and material plans into Canvas nodes, Ask-mode execution briefs, and web handoff packages. The TapNow agent executes in the web UI without calling unpublished APIs. |
+| VectCutAPI | Required for automatic draft creation | Run locally at `127.0.0.1:9001`; Workbench compiles and writes editable drafts by default. |
 
-推荐部署顺序是：**核心 MCP → 本地 VectCutAPI → 剪映 → FFmpeg → Whisper/TTS → Premiere/AE → TapNow**。缺少 VectCutAPI 时工程审计仍可用，但自动创建可编辑剪映草稿会被 `vectcut.execute` 明确阻止。
+Recommended order: **core MCP → local VectCutAPI → Jianying → FFmpeg → Whisper/TTS → Premiere/AE → TapNow**. Project auditing remains available without VectCutAPI, but `vectcut.execute` explicitly blocks automatic editable Jianying draft creation.
 
-### 本地 VectCutAPI（默认自动建稿通道）
+### Local VectCutAPI: default automatic draft path
 
-Cut Workbench 默认使用 `http://127.0.0.1:9001`，只接受本机回环地址，不会调用 `open.vectcut.com`，也不要求 `VECTCUT_API_KEY`。先在与剪映同一台机器上部署开源 VectCutAPI：
+Cut Workbench defaults to `http://127.0.0.1:9001`, accepts only loopback endpoints, does not call `open.vectcut.com`, and requires no `VECTCUT_API_KEY`. Deploy open-source VectCutAPI on the same machine as Jianying:
 
-Windows 普通用户应优先使用上面的 `scripts/windows/install-local-editing.ps1`，macOS/Linux 用户应优先使用 `bash scripts/posix/install-local-editing.sh`，而不是手动执行本节的开发者命令。两套安装包都会固定已实测的上游提交、剪映草稿 profile、服务启动和 `doctor` 自检。
+Windows users should prefer `scripts/windows/install-local-editing.ps1`; macOS/Linux users should prefer `bash scripts/posix/install-local-editing.sh` to the developer commands below. Both installers pin a tested upstream commit and Jianying draft profile, start the service, and provide `doctor` checks.
 
 ```powershell
 git clone https://github.com/sun-guannan/VectCutAPI.git D:/tools/VectCutAPI
@@ -209,7 +209,7 @@ python -m pip install -r requirements.txt
 python D:/projects/CutWorkBench/scripts/serve_vectcut.py --repo D:/tools/VectCutAPI
 ```
 
-macOS 使用同一仓库和 Python 环境；先安装剪映专业版，再启动服务：
+macOS uses the same repository and Python environment. Install Jianying Pro first, then start the service:
 
 ```bash
 git clone https://github.com/sun-guannan/VectCutAPI.git ~/tools/VectCutAPI
@@ -219,15 +219,15 @@ python -m pip install -r requirements.txt
 python /path/to/CutWorkBench/scripts/serve_vectcut.py --repo ~/tools/VectCutAPI
 ```
 
-启动前，在 VectCutAPI 仓库根目录创建 `config.json`（上游默认是国际版和 9000，不能直接沿用）：
+Before startup, create `config.json` in the VectCutAPI repository root. Upstream defaults to the international editor and port 9000, so do not use those defaults unchanged:
 
 ```json
 {"draft_profile":"jianying_pro_10","is_capcut_env":false,"port":9001,"is_upload_draft":false,"draft_domain":"http://127.0.0.1:9001"}
 ```
 
-`serve_vectcut.py` 在 Windows/macOS/Linux 都绑定本机回环地址，端口默认 9001。依赖 FFmpeg 的 `ffprobe`，必须加入服务进程的 PATH。上游模板是剪映 10.x 模板；生成成功与本机剪映版本能打开是两项验收，macOS 编辑器需在真机验收，WSL 只能证明 Linux 服务执行链。
+`serve_vectcut.py` binds loopback on Windows/macOS/Linux, defaulting to port 9001. FFmpeg's `ffprobe` must be in the service process's PATH. The upstream template targets Jianying 10.x. Successful generation and opening in the installed editor are separate acceptance checks. macOS editor acceptance requires a real machine; WSL establishes only Linux service execution.
 
-配置草稿根目录，避免在多磁盘或自定义安装路径下写到错误位置。Windows 和 macOS 的默认候选值分别为 `%LOCALAPPDATA%/JianyingPro/User Data/Projects/com.lveditor.draft` 与 `~/Movies/JianyingPro/User Data/Projects/com.lveditor.draft`；若剪映实际草稿目录不同，必须覆盖它：
+Configure the draft root to avoid writing to the wrong disk or custom installation path. Default candidates are `%LOCALAPPDATA%/JianyingPro/User Data/Projects/com.lveditor.draft` on Windows and `~/Movies/JianyingPro/User Data/Projects/com.lveditor.draft` on macOS. Override them if your actual directory differs:
 
 ```json
 {
@@ -239,27 +239,27 @@ python /path/to/CutWorkBench/scripts/serve_vectcut.py --repo ~/tools/VectCutAPI
 }
 ```
 
-保存为运行目录 `--root` 下的 `runtime-config.json` 后会自动加载；也可用 `--config` 显式指定其他文件。该文件可以同时放入 `providers` 和 `routing`，完整格式见 [运行时配置](docs/runtime-configuration.md)：
+Saving this as `runtime-config.json` under `--root` enables automatic loading; `--config` selects another file explicitly. The same file can contain `providers` and `routing`; see [Runtime configuration](docs/runtime-configuration.md):
 
 ```powershell
 cut-workbench --root D:/cut-runtime --config D:/cut-config/runtime-config.json call vectcut.health '{}'
 ```
 
-通过健康检查后，调用 `vectcut.execute`。它先从指定 revision 编译计划，再依次创建草稿、写入素材/轨道/字幕/效果、保存到新的草稿；拒绝覆盖已有草稿。保存后检查任务状态、实际文件、实体数量、时间线位置和素材文件。计划和回执写入运行目录 `vectcut-executions/`。
+After the health check, call `vectcut.execute`. It compiles the specified revision, creates a draft, writes materials/tracks/subtitles/effects, and saves a new draft, refusing to overwrite an existing one. After saving, it checks job status, actual files, entity counts, timeline positions, and media files. Plans and receipts are written to `vectcut-executions/` in the runtime directory.
 
 ```powershell
 cut-workbench --root D:/cut-runtime --config D:/cut-config/runtime-config.json call vectcut.execute '{"project_id":"demo","revision":2}'
 ```
 
-真实媒体冒烟测试（素材至少 6 秒；生成两段带入点的剪辑，并验证素材 SHA-256）：
+Real-media smoke test: source media must be at least 6 seconds; the test generates two clips with source in-points and verifies source SHA-256:
 
 ```bash
 PYTHONPATH=src python scripts/smoke_vectcut.py --source /path/to/video.mov --root /path/to/smoke-runtime --draft-folder /path/to/jianying-drafts
 ```
 
-## 接入 Agent
+## Connect an agent
 
-任何支持 stdio MCP 的 Agent 都可以使用同一启动命令：
+Any stdio MCP agent can use the same launch configuration:
 
 ```json
 {
@@ -274,9 +274,9 @@ PYTHONPATH=src python scripts/smoke_vectcut.py --source /path/to/video.mov --roo
 }
 ```
 
-如果需要本地 Whisper、镜头检测或自定义 TTS sidecar，在启动参数中增加 `--config D:/cut-config/runtime-config.json`。配置结构见 [运行时配置](docs/runtime-configuration.md) 和 [examples/runtime-config.json](examples/runtime-config.json)。任何实现“一条 JSON 请求从 stdin 输入、一条 JSON 结果从 stdout 输出”的程序都能作为 `json-command` provider，不需要修改 Workbench 核心。
+Add `--config D:/cut-config/runtime-config.json` for local Whisper, shot detection, or custom TTS sidecars. See [Runtime configuration](docs/runtime-configuration.md) and [examples/runtime-config.json](examples/runtime-config.json). Any program that reads one JSON request from stdin and writes one JSON result to stdout can be a `json-command` provider without changes to the core.
 
-## 核心工作流
+## Core workflow
 
 ```text
 project.create
@@ -287,45 +287,45 @@ project.inspect → project.apply_plan → new revision
       ↓
 project.verify → project.manifest
       ↓
-├─ vectcut.health → vectcut.compile → vectcut.execute（新可编辑草稿）
+├─ vectcut.health → vectcut.compile → vectcut.execute (new editable draft)
 └─ sync.open → sync.preview → sync.commit → sync.publish clone / sync.apply live
 ```
 
-关键规则：
+Key rules:
 
-- 每次修改前先 `project.inspect`，使用当前 revision 作为 `expected_revision`。
-- 原始媒体不修改；片段只保存素材区间和时间线位置。
-- 效果、字幕、处理副本和音频尽量保持独立轨道或独立控件。
-- `pending_agent` 是正常状态，需要 Agent 完成后通过 `capability.submit` 回填证据。
-- 外部编辑器同步必须先 preview；冲突必须明确选择 `human` 或 `agent`。
-- `sync.publish` 只创建新副本，不覆盖原剪映、`.prproj` 或 `.aep` 工程。省略 `destination_path` 时，默认命名为 `项目名-vN-具体改动`；可传入 `release_version` 与 `change_summary` 明确版本和改动说明。
-- 剪映打开期间可持续把新需求提交为 Workbench revision，并在验收节点一次性关闭剪映后发布最新已提交会话。`sync.publish` 传入 `reopen_editor: true` 会在安全副本注册完成后自动重新拉起剪映；剪映没有公开“打开指定草稿”的启动参数，因此需在草稿库点选最新命名副本。
-- 剪映已打开时，使用独立的 `jianying:live-local` 适配器执行 `sync.open → sync.preview → sync.commit → sync.apply`。它由剪映侧桥接在当前时间线中应用带指纹的白名单补丁，不生成草稿副本，也不会写入正在打开的 `draft_content.json`。桥接尚未连接或回执不匹配时会明确拒绝，不会降级为文件强写。
-- 已绑定的 A/V 片段可保留稳定 ID 地换素材、换轨和重排；换素材会在剪映克隆稿中新增素材记录，只重定向目标片段，原素材仍保留。整条时间线的任意增删重组由本地 VectCut 编译为新可编辑草稿。
-- `handed_off` revision 不可再修改，需要先创建分支。
+- Call `project.inspect` before every mutation and use the current revision as `expected_revision`.
+- Original media remains unchanged; segments store source ranges and timeline positions.
+- Keep effects, captions, treatment copies, and audio in separate tracks or controls where possible.
+- `pending_agent` is normal: the agent completes the task and submits evidence through `capability.submit`.
+- Preview before external editor synchronization; explicitly resolve conflicts as `human` or `agent`.
+- `sync.publish` creates a new copy and never overwrites the original Jianying, `.prproj`, or `.aep` project. Without `destination_path`, names default to `project-name-vN-specific-change`; use `release_version` and `change_summary` to specify them.
+- While Jianying is open, submit new requirements as Workbench revisions. At an acceptance point, close Jianying once and publish the latest committed session. `reopen_editor: true` in `sync.publish` relaunches Jianying after registering the safe copy. Jianying exposes no public “open specific draft” launch argument, so select the latest named copy in its draft library.
+- For an open Jianying editor, use the separate `jianying:live-local` adapter with `sync.open → sync.preview → sync.commit → sync.apply`. A Jianying-side bridge applies fingerprinted allowlist patches to the current timeline without generating draft copies or writing to the open `draft_content.json`. Missing bridges or mismatched receipts cause explicit refusal rather than forced file writes.
+- Bound A/V segments can replace media, change tracks, or reorder while retaining stable IDs. Media replacement adds a material record to the cloned Jianying draft and redirects only the target segment, preserving the original media record. Arbitrary timeline additions, removals, and restructuring compile through local VectCut into a new editable draft.
+- `handed_off` revisions are immutable; branch first to continue editing.
 
-## MCP 工具
+## MCP tools
 
-| 分组 | 工具 |
+| Group | Tools |
 | --- | --- |
-| 工程 | `project.create`、`project.inspect`、`project.apply_plan`、`project.branch` |
-| 验证 | `project.verify`、`project.manifest` |
-| 生产工作流 | `workflow.contract`、`workflow.status` |
-| 能力 | `capability.request`、`capability.pending`、`capability.submit` |
-| 生成编排 | `generation.contract`、`generation.request`、`generation.pending`、`generation.reconciliation`、`generation.claim`、`generation.heartbeat`、`generation.approve`、`generation.authorize`、`generation.submit` |
-| 本地 VectCut | `vectcut.health`、`vectcut.compile`、`vectcut.execute` |
-| 外部编辑器 | `sync.open`、`sync.preview`、`sync.commit`、`sync.publish`、`sync.apply` |
-| TapNow 上下文工程 | `tapnow.context.compile`、`tapnow.assets.stage`、`tapnow.web.handoff`、`tapnow.canvas.reconcile` |
+| Project | `project.create`, `project.inspect`, `project.apply_plan`, `project.branch` |
+| Verification | `project.verify`, `project.manifest` |
+| Production workflow | `workflow.contract`, `workflow.status` |
+| Capabilities | `capability.request`, `capability.pending`, `capability.submit` |
+| Generation orchestration | `generation.contract`, `generation.request`, `generation.pending`, `generation.reconciliation`, `generation.claim`, `generation.heartbeat`, `generation.approve`, `generation.authorize`, `generation.submit` |
+| Local VectCut | `vectcut.health`, `vectcut.compile`, `vectcut.execute` |
+| External editors | `sync.open`, `sync.preview`, `sync.commit`, `sync.publish`, `sync.apply` |
+| TapNow context engineering | `tapnow.context.compile`, `tapnow.assets.stage`, `tapnow.web.handoff`, `tapnow.canvas.reconcile` |
 
-用 `cut-workbench --root D:/cut-runtime list-tools` 可获取完整 JSON Schema。
+Run `cut-workbench --root D:/cut-runtime list-tools` for complete JSON Schemas.
 
-## 本地分析与配音
+## Local analysis and voiceover
 
-轻量任务可以配置为本地 provider，高精度任务可以保留给 Agent。默认策略包括媒体探测、逐词转写、静音/节拍/镜头检测、帧理解、编辑规划与语义验证。
+Configure lightweight tasks as local providers and reserve high-precision work for the agent. Default policies include media probing, word-level transcription, silence/beat/shot detection, frame understanding, edit planning, and semantic verification.
 
-### 配置本地 TTS
+### Configure local TTS
 
-本地 TTS 通过同一个 capability seam 接入。把 GPT-SoVITS、CosyVoice 或其他引擎包装成 JSON stdin/stdout sidecar，然后创建例如 `D:/cut-config/runtime-config.json`：
+Local TTS connects through the same capability seam. Wrap GPT-SoVITS, CosyVoice, or another engine in a JSON stdin/stdout sidecar and create a configuration such as `D:/cut-config/runtime-config.json`:
 
 ```json
 {
@@ -352,7 +352,7 @@ project.verify → project.manifest
 }
 ```
 
-启动 Workbench 时加载它：
+Load it at startup:
 
 ```powershell
 cut-workbench --root D:/cut-runtime `
@@ -360,14 +360,14 @@ cut-workbench --root D:/cut-runtime `
   mcp
 ```
 
-`json-command` 不经过 shell，而是按 `command` 数组直接启动进程。Workbench 会向 sidecar 的 stdin 写入一个 JSON 对象；TTS 建议接受以下字段：
+`json-command` launches processes directly from the `command` array without a shell. Workbench writes one JSON object to sidecar stdin. Suggested TTS fields:
 
 ```json
 {
   "capability": "audio.synthesize.tts",
   "inputs": {
-    "text": "欢迎来到太忆空间。",
-    "output_path": "D:/video-project/06_口播与音频/VO_S01_001.wav",
+    "text": "Welcome to TiMEM Space.",
+    "output_path": "D:/video-project/06_voiceover-and-audio/VO_S01_001.wav",
     "voice_id": "speaker-01",
     "reference_audio": "D:/voices/speaker-01.wav"
   },
@@ -380,69 +380,69 @@ cut-workbench --root D:/cut-runtime `
 }
 ```
 
-sidecar 的 stdout 必须只输出一个结果对象，运行日志应写入 stderr：
+Sidecar stdout must contain only one result object; write logs to stderr:
 
 ```json
 {
   "payload": {
-    "audio_path": "D:/video-project/06_口播与音频/VO_S01_001.wav",
+    "audio_path": "D:/video-project/06_voiceover-and-audio/VO_S01_001.wav",
     "duration_seconds": 2.84,
     "sample_rate": 48000,
     "voice_id": "speaker-01"
   },
   "evidence": [
-    "D:/video-project/06_口播与音频/VO_S01_001.wav"
+    "D:/video-project/06_voiceover-and-audio/VO_S01_001.wav"
   ]
 }
 ```
 
-可以直接验证路由和 sidecar：
+Verify routing and the sidecar directly:
 
 ```powershell
 cut-workbench --root D:/cut-runtime `
   --config D:/cut-config/runtime-config.json `
-  call capability.request '{"capability":"audio.synthesize.tts","inputs":{"text":"测试配音","output_path":"D:/cut-runtime/tts-test.wav"},"quality":"standard","sensitivity":"local-only","constraints":{"format":"wav"}}'
+  call capability.request '{"capability":"audio.synthesize.tts","inputs":{"text":"Voiceover test","output_path":"D:/cut-runtime/tts-test.wav"},"quality":"standard","sensitivity":"local-only","constraints":{"format":"wav"}}'
 ```
 
-`audio.synthesize.tts` 默认优先选择可用的本地 provider；如果配置中没有声明该 capability 的 provider，任务会降级进入 `pending_agent`，不会假装本地生成成功。建议每条字幕 cue 生成独立音频文件和独立 segment，并保存参考音频、自然时长版本、拟合后版本及测量证据；不要只留下一个不可拆分的整轨 WAV。
+`audio.synthesize.tts` prefers an available local provider. If none declares that capability, the job falls back to `pending_agent` instead of claiming successful local generation. Generate separate audio files and segments per subtitle cue, retaining reference audio, natural-duration versions, fitted versions, and measurements; do not keep only one indivisible full-track WAV.
 
-仓库不包含任何 TTS 模型、声音权重或特定机器的绝对路径。
+The repository contains no TTS models, voice weights, or machine-specific absolute paths.
 
-## 外部编辑器
+## External editors
 
-### 剪映
+### Jianying
 
-剪映适配器执行基线 A、当前 Workbench B、当前人工草稿 C 的三方合并。未知字幕、贴纸、效果和复合片段作为 opaque 外部实体保存，不会静默丢失。关闭剪映后的文件适配器只发布安全副本；已打开剪映的增量改动通过 `jianying:live-local` 桥接和 `sync.apply` 执行。详见 [docs/jianying-sync.md](docs/jianying-sync.md)。
+The adapter performs a three-way merge between baseline A, current Workbench B, and current human draft C. Unknown captions, stickers, effects, and compound clips are preserved as opaque external entities. The file adapter publishes safe copies only after Jianying closes; incremental updates to an open editor use `jianying:live-local` and `sync.apply`. See [docs/jianying-sync.md](docs/jianying-sync.md).
 
 ### Premiere Pro / After Effects
 
-仓库提供本机 CEP 面板源码和受限文件桥接。面板默认不授权发布；只有人工检查 preview 并打开授权后，Workbench 才能向新工程副本写入 allowlist patch。面板包、宿主版本和 profile 都使用 SHA-256 pin。详见 [docs/adobe-local-bridge.md](docs/adobe-local-bridge.md)。
+The repository supplies local CEP panel source and a restricted file bridge. Panels do not authorize publication by default. Only after a person reviews the preview and enables authorization can Workbench write an allowlist patch to a new project copy. Panel packages, host versions, and profiles are SHA-256 pinned. See [docs/adobe-local-bridge.md](docs/adobe-local-bridge.md).
 
-## 安全与可恢复性
+## Safety and recoverability
 
-- 所有工程 mutation 都产生新 revision 和 journal 记录。
-- revision 冲突不会自动重试或覆盖并发修改。
-- 未建模的编辑器对象以 opaque 数据保留。
-- 不支持的编译能力会显式拒绝，或要求记录经过人工批准的 downgrade。
-- 发布前后验证源工程哈希、副本存在性、面板身份、实际 patch 和结果快照。
-- 主观视觉质量必须有真实视觉证据，不能由结构测试代替。
+- Every project mutation creates a new revision and journal record.
+- Revision conflicts do not automatically retry or overwrite concurrent changes.
+- Unmodeled editor objects remain as opaque data.
+- Unsupported compilation capabilities fail explicitly or require a recorded, human-approved downgrade.
+- Publication verifies source hashes, copy existence, panel identity, actual patches, and result snapshots before and after writing.
+- Subjective visual quality requires actual visual evidence; structural tests cannot establish it.
 
-## 文档
+## Documentation
 
-- [完整使用教程](docs/usage-guide.md)
-- [Windows 本地剪映自动剪辑安装包](docs/windows-local-editing-setup.md)
-- [macOS / Linux 本地剪映自动剪辑安装包](docs/posix-local-editing-setup.md)
-- [架构与稳定边界](docs/architecture.md)
-- [实现规格与非目标](docs/spec.md)
-- [剪映双向同步](docs/jianying-sync.md)
-- [TapNow 上下文工程](docs/tapnow-context-engineering.md)
-- [Premiere / After Effects 本机桥接](docs/adobe-local-bridge.md)
-- [运行时配置与调用链](docs/runtime-configuration.md)
-- [PR / AE 开源方案调研](docs/premiere-after-effects-open-source-research.md)
-- [运行时配置示例](examples/runtime-config.json)
-- [编辑计划示例](examples/edit-plan.json)
+- [Complete usage guide](docs/usage-guide.md)
+- [Windows local Jianying editing setup](docs/windows-local-editing-setup.md)
+- [macOS / Linux local Jianying editing setup](docs/posix-local-editing-setup.md)
+- [Architecture and stable boundaries](docs/architecture.md)
+- [Implementation specification and non-goals](docs/spec.md)
+- [Bidirectional Jianying synchronization](docs/jianying-sync.md)
+- [TapNow context engineering](docs/tapnow-context-engineering.md)
+- [Local Premiere / After Effects bridge](docs/adobe-local-bridge.md)
+- [Runtime configuration and call chain](docs/runtime-configuration.md)
+- [Premiere / AE open-source research](docs/premiere-after-effects-open-source-research.md)
+- [Runtime configuration example](examples/runtime-config.json)
+- [Edit plan example](examples/edit-plan.json)
 
-## 开发与测试
+## Development and testing
 
 ```powershell
 $env:PYTHONPATH = 'src'
@@ -450,15 +450,15 @@ python -m unittest discover -s tests -v
 python -m compileall -q src
 ```
 
-## 当前限制
+## Current limitations
 
-- 这是控制平面，不提供时间线 GUI、播放器或渲染器。
-- 本地 VectCutAPI 是自动建稿的必需 sidecar；服务未启动时 `vectcut.execute` 会失败，不会降级到云端或手动导入。
-- 剪映 codec 不在仓库中，必须由操作者提供并固定 SHA-256。
-- Premiere CEP typed writer 目前只覆盖明确暴露的素材入/出点。
-- AE layer、Dynamic Link、Premiere 速度/位置/Transform 的完整 typed 双向映射仍在路线图中。
-- 云端 Agent、云模型和第三方生成服务产生的费用不由本项目承担；纯本地路线可以不调用它们。
+- This control plane provides no timeline GUI, player, or renderer.
+- Local VectCutAPI is required for automatic draft creation. Without it, `vectcut.execute` fails without falling back to the cloud or manual import.
+- The Jianying codec is not bundled; the operator must supply it and pin its SHA-256.
+- The Premiere CEP typed writer currently covers only explicitly exposed source in/out points.
+- Full typed bidirectional mapping for AE layers, Dynamic Link, and Premiere speed/position/Transform remains on the roadmap.
+- This project does not cover fees charged by cloud agents, models, or third-party generation services. Entirely local paths can avoid them.
 
 ## License
 
-Apache-2.0，见 [pyproject.toml](pyproject.toml) 中的项目元数据。
+Apache-2.0; see project metadata in [pyproject.toml](pyproject.toml).

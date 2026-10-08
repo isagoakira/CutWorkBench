@@ -91,30 +91,30 @@ Import Pack, a changed staging root or an invalid manifest.
   "upstream": {
     "artifact_ids": ["ART-SCRIPT-V1", "ART-STORYBOARD-V1", "ART-MATERIAL-V1"],
     "campaign": {
-      "audience": "目标用户",
-      "platform": "短视频平台",
-      "core_message": "一句已锁定的核心信息",
-      "creative_direction": "已确认的视觉基调",
-      "prohibitions": ["产品文字不得漂移"]
+      "audience": "Target users",
+      "platform": "Short-video platform",
+      "core_message": "One locked core message",
+      "creative_direction": "Confirmed visual tone",
+      "prohibitions": ["Product text must remain unchanged"]
     },
     "shots": [
       {
         "shot_id": "S01",
         "sequence": 1,
         "duration_seconds": 5,
-        "purpose": "建立产品视觉锚点",
-        "visual_direction": "来自分镜的画面方向",
+        "purpose": "Establish the product visual anchor",
+        "visual_direction": "Visual direction inherited from the storyboard",
         "route": "generative",
         "source_artifact_ids": ["ART-PRODUCT-FRONT"],
         "reference_roles": {"ART-PRODUCT-FRONT": "product-source"},
         "depends_on_shot_ids": [],
         "generation": {
           "capability": "video.generate",
-          "prompt": "已由锁定分镜和生成决定导出的镜头提示",
+          "prompt": "Shot prompt derived from the locked storyboard and generation decision",
           "output": {"count": 1, "aspect_ratio": "9:16", "duration_seconds": 5},
-          "preserve": ["包装文字", "瓶身比例"],
-          "avoid": ["额外 Logo"],
-          "acceptance_criteria": ["产品主体完整"]
+          "preserve": ["Packaging text", "Bottle proportions"],
+          "avoid": ["Additional logos"],
+          "acceptance_criteria": ["Complete product subject"]
         }
       }
     ]

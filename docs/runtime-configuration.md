@@ -1,29 +1,29 @@
-# 运行时配置与调用链
+# Runtime configuration and call chain
 
-Cut Workbench 启动时只选择一份 JSON 运行时配置。它同时提供三类信息：本地 capability provider、capability routing policy，以及本机 VectCutAPI 的连接参数。配置不是项目数据；工程 revision、journal、任务和同步会话始终保存在 `--root` 目录。
+Cut Workbench selects one JSON runtime configuration at startup, containing local capability providers, routing policy, and local VectCutAPI connection settings. Configuration is separate from project data; revisions, journals, jobs, and sync sessions always reside under `--root`.
 
-## 配置文件选择与覆盖顺序
+## Configuration file selection and override order
 
-CLI/MCP 启动时按以下顺序选择配置文件：
+CLI/MCP selects configuration in this order:
 
-1. 传入 `--config <path>`：只读取该文件。
-2. 未传 `--config` 且 `<root>/runtime-config.json` 存在：自动读取该文件。
-3. 两者均不满足：使用内置默认值。
+1. With `--config <path>`, read only that file.
+2. Without `--config`, automatically read `<root>/runtime-config.json` if it exists.
+3. Otherwise, use built-in defaults.
 
-不会自动合并多个 JSON 文件。环境变量与标量 CLI 参数只覆盖 VectCut 的指定字段：
+Multiple JSON files are not automatically merged. Environment variables and scalar CLI arguments override only specified VectCut fields:
 
-| 字段 | 高 → 低优先级 |
+| Field | Highest → lowest priority |
 | --- | --- |
-| VectCut 地址 | `--vectcut-url` → `vectcut.base_url` → `CUT_WORKBENCH_VECTCUT_URL` → `http://127.0.0.1:9001` |
-| VectCut 草稿根目录 | `--vectcut-draft-folder` → `vectcut.draft_folder` → 当前平台的剪映默认草稿目录 |
-| VectCut 超时 | `vectcut.timeout` → `120` 秒 |
-| capability provider / routing | 选中的配置文件 → 内置默认 routing；`ffprobe` 始终默认注册 |
+| VectCut endpoint | `--vectcut-url` → `vectcut.base_url` → `CUT_WORKBENCH_VECTCUT_URL` → `http://127.0.0.1:9001` |
+| VectCut draft root | `--vectcut-draft-folder` → `vectcut.draft_folder` → Platform default Jianying draft directory |
+| VectCut timeout | `vectcut.timeout` → `120` seconds |
+| capability provider / routing | Selected configuration → built-in routing; `ffprobe` is always registered by default |
 
-`vectcut.base_url` 和 `CUT_WORKBENCH_VECTCUT_URL` 必须为 `http://` 或 `https://` 的本机回环地址（`localhost`、`127.0.0.1` 或 `::1`）。远程主机和云端 VectCut 地址会在启动时被拒绝。
+`vectcut.base_url` and `CUT_WORKBENCH_VECTCUT_URL` must use `http://` or `https://` with local loopback (`localhost`, `127.0.0.1`, or `::1`). Remote/cloud endpoints are rejected at startup.
 
-## 最小配置
+## Minimum configuration
 
-只自动建稿时，只需声明 VectCut；默认 `ffprobe` 不会被删除：
+For automatic draft creation alone, declare only VectCut; default `ffprobe` remains:
 
 ```json
 {
@@ -35,11 +35,11 @@ CLI/MCP 启动时按以下顺序选择配置文件：
 }
 ```
 
-`draft_folder` 应指向当前本机剪映实际使用且可写的草稿根目录。`vectcut.execute` 始终创建一个新草稿；若目标草稿 ID 已存在，执行会拒绝覆盖。
+`draft_folder` must point to the actual writable draft root used by local Jianying. `vectcut.execute` always creates a new draft and refuses to overwrite an existing draft ID.
 
-## 加入本地 sidecar
+## Add local sidecars
 
-需要本地转写、镜头检测或 TTS 时，把 provider 与 VectCut 放在同一份文件中：
+For local transcription, shot detection, or TTS, put providers and VectCut in the same file:
 
 ```json
 {
@@ -70,23 +70,23 @@ CLI/MCP 启动时按以下顺序选择配置文件：
 }
 ```
 
-`providers` 是数组。支持的 `kind` 为：
+`providers` is an array. Supported `kind` values:
 
-- `ffprobe`：可选 `executable`；若未声明，仍会注册系统 PATH 中的 `ffprobe`。
-- `json-command`：需要 `provider_id`、`capabilities` 和 `command` 数组；请求通过 stdin 输入一个 JSON，结果通过 stdout 输出一个 JSON，日志写 stderr。
+- `ffprobe`: optional `executable`; if omitted, `ffprobe` from system PATH is still registered.
+- `json-command`: requires `provider_id`, `capabilities`, and a `command` array. Read one JSON request from stdin, write one JSON result to stdout, and send logs to stderr.
 
-`routing` 是对象，包含可选 `default_route`（`local` 或 `agent`）和 capability/quality 到路由的 `rules`。若省略则使用内置策略。
+`routing` is an object with optional `default_route` (`local` or `agent`) and `rules` mapping capability/quality to routes. Omission uses built-in policy.
 
-## 启动与调用链
+## Startup and call chain
 
 ```powershell
-# 自动读取 D:/cut-runtime/runtime-config.json
+# Automatically load D:/cut-runtime/runtime-config.json
 cut-workbench --root D:/cut-runtime mcp
 
-# 使用一个明确的机器配置
+# Use an explicit machine configuration
 cut-workbench --root D:/cut-runtime --config D:/cut-config/runtime-config.json mcp
 
-# 对一次启动覆盖 VectCut 服务与草稿根目录
+# Override the VectCut service and draft root for this launch
 cut-workbench --root D:/cut-runtime `
   --config D:/cut-config/runtime-config.json `
   --vectcut-url http://127.0.0.1:9100 `
@@ -94,21 +94,21 @@ cut-workbench --root D:/cut-runtime `
   call vectcut.health '{}'
 ```
 
-MCP 与 CLI `call` 使用相同的 `WorkbenchApp`。工程变更先经过 `project.inspect` 和 `project.apply_plan` 写入 revision；随后按目标选择以下路径：
+MCP and CLI `call` share `WorkbenchApp`. Inspect and apply project changes through `project.inspect` and `project.apply_plan` to create revisions, then select a target path:
 
 ```text
-capability.request ─────────────→ 本地 provider 或 pending_agent → capability.submit
-project revision ──────────────→ vectcut.health → compile → execute → 新剪映草稿
+capability.request ─────────────→ local provider or pending_agent → capability.submit
+project revision ──────────────→ vectcut.health → compile → execute → new Jianying draft
 project revision + editor base ─→ sync.open → preview → commit → publish clone / apply live
 ```
 
-`vectcut.compile` 只产生审计计划；只有 `vectcut.execute` 会调用本机 VectCutAPI。`sync.publish` 生成外部工程副本，`sync.apply` 只用于已连接、已授权的本地编辑器桥接，二者不互相替代。
+`vectcut.compile` produces an audit plan only; `vectcut.execute` calls local VectCutAPI. `sync.publish` creates external project copies, while `sync.apply` is only for connected, authorized local editor bridges. They are not interchangeable.
 
-## 启动前检查
+## Pre-start checks
 
-1. `ffprobe -version` 可在启动 Workbench 的同一终端中执行。
-2. 本机 VectCutAPI 已在配置端口监听：`cut-workbench --root D:/cut-runtime call vectcut.health '{}'`。
-3. `draft_folder` 是实际剪映草稿根目录且具备写权限。
-4. 使用 `cut-workbench --root D:/cut-runtime list-tools` 查看当前 MCP 完整 schema，而不是猜测工具参数。
+1. Run `ffprobe -version` in the terminal used to launch Workbench.
+2. Verify local VectCutAPI on the configured port: `cut-workbench --root D:/cut-runtime call vectcut.health '{}'`.
+3. Confirm `draft_folder` is the actual writable Jianying draft root.
+4. Use `cut-workbench --root D:/cut-runtime list-tools` for current MCP schemas rather than guessing arguments.
 
-完整可运行配置在 [examples/runtime-config.json](../examples/runtime-config.json)。
+A complete runnable configuration is available in [examples/runtime-config.json](../examples/runtime-config.json).

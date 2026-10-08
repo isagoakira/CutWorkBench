@@ -1,10 +1,10 @@
-# Cut Workbench 完整使用教程
+# Cut Workbench complete usage guide
 
-本教程从空目录开始，完成安装、Agent 接入、工程创建、本地/Agent 能力路由、编辑计划、验证、Manifest，以及剪映或 Adobe 工程的安全双向同步。
+Starting from an empty directory, this tutorial covers installation, agent integration, project creation, local/agent capability routing, edit plans, verification, manifests, and safe bidirectional synchronization with Jianying or Adobe projects.
 
-示例以 Windows PowerShell 和 Python 3.11+ 为准。所有路径都应替换成自己的实际位置。
+Examples use Windows PowerShell and Python 3.11+. Replace all paths with your actual locations.
 
-## 1. 安装与健康检查
+## 1. Installation and health checks
 
 ```powershell
 git clone git@github.com:isagoakira/CutWorkBench.git
@@ -14,25 +14,25 @@ python -m venv .venv
 python -m pip install -e .
 ```
 
-选择独立运行目录。这里会保存项目 revision、journal、capability job 和同步会话，不要使用源码目录本身：
+Choose a separate runtime directory for revisions, journals, capability jobs, and sync sessions; do not use the source directory itself:
 
 ```powershell
 $workbenchRoot = 'D:/cut-runtime'
 cut-workbench --root $workbenchRoot list-tools
 ```
 
-输出中应看到 `project.create`、`project.apply_plan`、`capability.request`、`project.verify` 和 `sync.open` 等工具。
+Output should include tools such as `project.create`, `project.apply_plan`, `capability.request`, `project.verify`, and `sync.open`.
 
-若不希望安装包：
+To run without installing the package:
 
 ```powershell
 $env:PYTHONPATH = 'src'
 python -m cut_workbench.cli --root $workbenchRoot list-tools
 ```
 
-## 2. 直接用 CLI 完成第一次调用
+## 2. Make the first call through CLI
 
-CLI 的 `call` 子命令与 MCP 调用同一个接口，适合安装验证和故障排查。
+The CLI `call` subcommand uses the same interface as MCP, useful for installation checks and troubleshooting.
 
 ```powershell
 $createRequest = @'
@@ -48,11 +48,11 @@ cut-workbench --root $workbenchRoot call project.create $createRequest
 cut-workbench --root $workbenchRoot call project.inspect '{"project_id":"tutorial-01"}'
 ```
 
-新工程从 revision 1 开始。每个成功的 `project.apply_plan` 都生成新的不可变 revision。
+New projects start at revision 1. Each successful `project.apply_plan` creates a new immutable revision.
 
-## 3. 接入 Codex 或其他 MCP Agent
+## 3. Connect Codex or another MCP agent
 
-在 Agent 的 MCP 配置中添加：
+Add to the agent MCP configuration:
 
 ```json
 {
@@ -67,11 +67,11 @@ cut-workbench --root $workbenchRoot call project.inspect '{"project_id":"tutoria
 }
 ```
 
-刷新 Agent 的 MCP 连接。让 Agent 在任何 mutation 前先调用 `project.inspect`。Agent 平台只调用 MCP；project schema、revision 和领域规则都留在 Workbench 中。
+Refresh the agent MCP connection. Require `project.inspect` before every mutation. Agent platforms call MCP only; project schemas, revisions, and domain rules remain in Workbench.
 
-## 4. 配置本地分析 provider
+## 4. Configure local analysis providers
 
-没有 `--config` 时，Workbench 仍注册默认 `ffprobe` provider。安装 FFmpeg 后可调用：
+Without `--config`, Workbench still registers default `ffprobe`. After installing FFmpeg, call:
 
 ```powershell
 $probeRequest = @'
@@ -87,7 +87,7 @@ $probeRequest = @'
 cut-workbench --root $workbenchRoot call capability.request $probeRequest
 ```
 
-要接入 Whisper 或其他 sidecar，复制并修改 [runtime-config.json](../examples/runtime-config.json)：
+For Whisper or other sidecars, copy and modify [runtime-config.json](../examples/runtime-config.json):
 
 ```json
 {
@@ -112,17 +112,17 @@ cut-workbench --root $workbenchRoot call capability.request $probeRequest
 }
 ```
 
-启动时增加配置：
+Load the configuration at startup:
 
 ```powershell
 cut-workbench --root $workbenchRoot --config D:/cut-config/runtime-config.json mcp
 ```
 
-`--config` 是合并配置，不会因只填写 `vectcut`、`routing` 或一个 sidecar 而移除默认 `ffprobe`。同一文件也可配置 VectCutAPI；配置文件选择、字段优先级和本机回环限制见 [运行时配置](runtime-configuration.md)。
+`--config` selects a combined configuration; declaring only `vectcut`, `routing`, or one sidecar does not remove default `ffprobe`. The same file can configure VectCutAPI. See [Runtime configuration](runtime-configuration.md) for file selection, field precedence, and loopback restrictions.
 
-### sidecar 协议
+### Sidecar protocol
 
-`json-command` provider 向程序 stdin 写入一个 request JSON。sidecar 必须向 stdout 只写一个结果对象：
+A `json-command` provider writes one request JSON to program stdin. The sidecar writes only one result object to stdout:
 
 ```json
 {
@@ -131,33 +131,33 @@ cut-workbench --root $workbenchRoot --config D:/cut-config/runtime-config.json m
 }
 ```
 
-日志写到 stderr。非零退出码、超时或无效 JSON 都会形成失败 job，不会伪装成成功结果。
+Write logs to stderr. Nonzero exit codes, timeouts, or invalid JSON create failed jobs rather than false successes.
 
-### Agent 原生任务
+### Agent-native tasks
 
-当策略选择 `agent`，`capability.request` 返回 `pending_agent` job。Agent 完成后调用 `capability.submit`：
+When policy selects `agent`, `capability.request` returns a `pending_agent` job. After completion, call `capability.submit`:
 
 ```json
 {
-  "job_id": "返回的 job_id",
+  "job_id": "returned job_id",
   "agent_id": "codex",
-  "payload": {"result": "结构化结果"},
+  "payload": {"result": "Structured result"},
   "evidence": ["evidence/frame-review.json"]
 }
 ```
 
-`pending_agent` 是正常状态。没有真实结果和证据时不要回填。
+`pending_agent` is normal. Do not submit without actual results and evidence.
 
-## 5. 建立第一个可编辑剪辑工程
+## 5. Create your first editable editing project
 
-先计算素材 SHA-256：
+Calculate source SHA-256 first:
 
 ```powershell
 $sourcePath = 'D:/media/source.mp4'
 $sourceHash = (Get-FileHash $sourcePath -Algorithm SHA256).Hash.ToLower()
 ```
 
-先 `project.inspect` 获取当前 revision，再一次性提交来源、轨道、片段、字幕和审计决策。下面假设素材时长为 12 秒，请替换为真实值：
+First get the current revision with `project.inspect`, then submit sources, tracks, segments, captions, and audit decisions together. This example assumes 12-second media; use the actual duration:
 
 ```powershell
 $plan = @"
@@ -193,7 +193,7 @@ $plan = @"
       "track_id": "S1-CAPTIONS",
       "start": 0.2,
       "end": 2.8,
-      "text": "这是第一条可编辑字幕",
+      "text": "This is the first editable caption",
       "speech_evidence": "evidence/transcript.words.json"
     },
     {
@@ -218,15 +218,15 @@ $plan = @"
 cut-workbench --root $workbenchRoot call project.apply_plan $plan
 ```
 
-如果其他调用者已产生新 revision，旧 `expected_revision` 会被拒绝。重新 inspect、理解差异，再构造下一份计划；不要盲目重试。
+If another caller has created a revision, the old `expected_revision` is rejected. Inspect again, understand the changes, and build a new plan; do not retry blindly.
 
-### 轨道预算
+### Track budget
 
-轨道不是片段容器，而是同时出现、需要独立调整的编辑角色。屏录默认使用一条 base 视频轨；静音交付不建音频轨；字幕、旁白、音乐或注释只在确实需要独立时间线时增加各自的一条轨。顺序片段必须复用既有轨道。详见 [保守轨道策略](track-usage-policy.md)。
+Tracks represent simultaneous editorial roles that need independent adjustment, not containers per clip. Screen recordings default to one base video track; silent deliveries have no audio track. Add one track each for captions, narration, music, or annotations only when independent timelines are needed. Sequential clips reuse tracks. See [Conservative track policy](track-usage-policy.md).
 
-## 6. 添加效果并保持可拆分
+## 6. Add effects while preserving separability
 
-同轨 Transform、Mask、Mask Blur、Keyframe 使用 `add_control`；独立效果使用 `effect` track：
+Use `add_control` for same-track Transform, Mask, Mask Blur, and Keyframe controls; independent effects use an `effect` track:
 
 ```json
 {
@@ -243,42 +243,42 @@ cut-workbench --root $workbenchRoot call project.apply_plan $plan
 }
 ```
 
-若目标平台无法保留某项能力，不要静默烘焙。先用 `record_downgrade` 保存原因、fallback 和批准者，再让 baked control 引用 `approved_exception_id`。
+Do not silently bake unsupported target capabilities. First record reason, fallback, and approver with `record_downgrade`; the baked control then references `approved_exception_id`.
 
-需要压紧剪辑时，使用 `update_segment` 和 `update_caption` 保持既有稳定 ID；确认轨道内没有片段、控件或字幕后，使用 `remove_track` 清理空轨。不要删除再重建同一逻辑对象，更不要为每块覆盖或每个片段新增一条轨道。
+For tighter edits, use `update_segment` and `update_caption` to retain stable IDs. Remove empty tracks with `remove_track` only after confirming no segments, controls, or captions remain. Do not delete/recreate the same logical object or add tracks per overlay or segment.
 
-## 7. 验证和 Manifest
+## 7. Verification and manifest
 
 ```powershell
 cut-workbench --root $workbenchRoot call project.verify '{"project_id":"tutorial-01"}'
 cut-workbench --root $workbenchRoot call project.manifest '{"project_id":"tutorial-01"}'
 ```
 
-常见失败项：
+Common failures:
 
-- `source-audit-missing`：缺少覆盖完整素材、至少 2 fps 的审计证据。
-- `source-hash-missing`：来源没有 64 位 SHA-256。
-- `track-overlap`：同一视频/音频轨片段重叠。
-- `track-gap`：base 轨存在未由 `intentional_gap` 决策解释的空洞。
-- `visual-verification-missing`：进入 review/delivery/handoff 时没有与当前内容指纹一致的视觉证据。
+- `source-audit-missing`: Missing full-source audit evidence sampled at least at 2 fps.
+- `source-hash-missing`: Source lacks a 64-character SHA-256.
+- `track-overlap`: Segments overlap on one video/audio track.
+- `track-gap`: Base-track gap lacks an `intentional_gap` decision.
+- `visual-verification-missing`: Review/delivery/handoff lacks visual evidence matching the current content fingerprint.
 
-Manifest 直接来自同一 revision，包含来源、粗剪映射、控件、字幕、决策、降级和验证状态。
+The manifest comes directly from the same revision and includes sources, rough-cut mapping, controls, captions, decisions, downgrades, and verification status.
 
-## 8. 编译 VectCut 计划
+## 8. Compile a VectCut plan
 
-先确认 `vectcut` 配置指向本机回环服务，并对实际草稿目录设置 `draft_folder` 或 `--vectcut-draft-folder`。运行目录内的 `runtime-config.json` 会自动加载；使用其他位置的文件时必须传入 `--config`。完整配置示例见 [运行时配置](runtime-configuration.md)。
+Confirm `vectcut` points to a loopback service and set `draft_folder` or `--vectcut-draft-folder` to the actual draft directory. Runtime `runtime-config.json` loads automatically; use `--config` for another location. See [Runtime configuration](runtime-configuration.md).
 
 ```powershell
 cut-workbench --root $workbenchRoot call vectcut.compile '{"project_id":"tutorial-01","draft_folder":"D:/drafts/tutorial-01"}'
 ```
 
-该工具返回可审计调用计划，不自动联网或渲染。出现 unsupported control 或 opaque external entity 时会明确拒绝，避免静默丢失原生对象。
+The tool returns an auditable call plan without network access or rendering. Unsupported controls or opaque external entities cause explicit rejection to prevent silent loss of native objects.
 
-默认本地执行通道已提供 `vectcut.health` 和 `vectcut.execute`。启动本地 VectCutAPI 后，使用 `call vectcut.execute '{"project_id":"tutorial-01","revision":2,"draft_folder":"D:/drafts"}'` 生成新草稿。返回的 receipt 包含实际草稿路径；执行同时验证落盘文件与素材，并保存调用回执。参见 README 的 Windows/macOS 本地部署步骤。
+The default local path provides `vectcut.health` and `vectcut.execute`. After starting local VectCutAPI, use `call vectcut.execute '{"project_id":"tutorial-01","revision":2,"draft_folder":"D:/drafts"}'` to generate a new draft. The receipt contains its actual path; execution verifies persisted files/media and saves call receipts. See Windows/macOS deployment in the README.
 
-## 9. 剪映双向同步
+## 9. Bidirectional Jianying synchronization
 
-剪映适配器需要与本机版本匹配的外部 codec，并强制 SHA-256 pin：
+The Jianying adapter requires an external codec matching the installed version, with mandatory SHA-256 pinning:
 
 ```powershell
 cut-workbench `
@@ -290,35 +290,35 @@ cut-workbench `
   mcp
 ```
 
-事务固定为：
+Transaction order:
 
-1. `sync.open` 固定 Workbench revision、codec profile 和剪映基线快照。
-2. 在 Workbench 和剪映中分别编辑。
-3. `sync.preview` 比较基线 A、Agent 当前 B、人工草稿 C。
-4. `sync.commit` 对每个冲突明确选择 `human` 或 `agent`。
-5. 关闭剪映，使用不存在的新目标目录执行 `sync.publish`。
+1. `sync.open` pins the Workbench revision, codec profile, and baseline Jianying snapshot.
+2. Edit in Workbench and Jianying.
+3. `sync.preview` compares baseline A, current agent state B, and human draft C.
+4. `sync.commit` explicitly selects `human` or `agent` for every conflict.
+5. Close Jianying and run `sync.publish` with a new, nonexistent destination directory.
+6. Open the clone for actual visual inspection; preserve the source as rollback baseline.
 
-### 剪映保持打开时的增量修改
+### Incremental changes while Jianying stays open
 
-配置 `jianying:live-local` 后，不使用 codec 文件发布器。剪映侧桥接连接当前草稿并写入快照；首次连接后，在同一剪映会话内每次新需求都可执行：
+With `jianying:live-local`, do not use the codec file publisher. A Jianying-side bridge connects to the current draft and writes snapshots. After initial connection, each request in the same editor session can use:
 
-1. `sync.open` 连接当前草稿。
-2. 在 Workbench 修改工程，再执行 `sync.preview` 和 `sync.commit`。
-3. 执行 `sync.apply`，由剪映侧桥接在当前打开的时间线应用变更。
+1. `sync.open` connects to the current draft.
+2. Edit in Workbench, then run `sync.preview` and `sync.commit`.
+3. Run `sync.apply`; the Jianying-side bridge updates the open timeline.
 
-`sync.apply` 没有 `destination_path`：它不是克隆发布。它要求桥接授权 `live_apply_enabled`、基线指纹匹配和完整回执；任一条件不满足时不写草稿文件。桥接启动参数与协议见 [jianying-sync.md](jianying-sync.md#已打开剪映的增量应用)。
-6. 打开 clone 做真实视觉检查；原草稿保留为回滚基线。
+`sync.apply` has no `destination_path` and is not clone publication. It requires `live_apply_enabled`, matching baseline fingerprints, and complete receipts. Failure of any condition prevents draft-file writes. See [Bridge startup and protocol](jianying-sync.md#incremental-updates-to-an-open-jianying-editor).
 
-完整约束见 [jianying-sync.md](jianying-sync.md)。
+Complete constraints:  [jianying-sync.md](jianying-sync.md).
 
-## 10. Premiere Pro / After Effects 桥接
+## 10. Premiere Pro / After Effects bridge
 
-当前 Adobe 2023 CEP 面板能力：
+Current Adobe 2023 CEP panel capabilities:
 
-- `premiere:cep-local`：活动 Sequence 快照和素材 source in/out 的 clone 写入。
-- `after-effects:cep-local`：活动 Composition/Layer 快照和 opaque 审计；typed layer binding 尚未完成。
+- `premiere:cep-local`: Active Sequence snapshots and source in/out writes to clones.
+- `after-effects:cep-local`: Active Composition/Layer snapshots and opaque audits; typed layer binding is unfinished.
 
-安装面板源码：
+Install panel source:
 
 ```powershell
 $cepExtensions = "$env:APPDATA/Adobe/CEP/extensions"
@@ -327,16 +327,16 @@ Copy-Item adapters/cep-local/premiere "$cepExtensions/com.cutworkbench.premiere"
 Copy-Item adapters/cep-local/after-effects "$cepExtensions/com.cutworkbench.aftereffects" -Recurse
 ```
 
-未签名开发面板还需要为 Adobe 2023 启用 CEP `PlayerDebugMode` 并重启应用。打开 **窗口 → 扩展 → Cut Workbench Bridge**，输入私有 bridge 目录，保持 **Permit clone publish** 未勾选并点击 **Write snapshot**。
+Unsigned development panels require CEP `PlayerDebugMode` in Adobe 2023 and an application restart. Open **Window → Extensions → Cut Workbench Bridge**, enter a private bridge directory, leave **Permit clone publish** unchecked, and click **Write snapshot**.
 
-计算 profile 和实际安装面板目录的哈希：
+Calculate the profile and installed-panel-directory hashes:
 
 ```powershell
 $premiereProfile = (Get-FileHash D:/cut-bridges/premiere/profile.json -Algorithm SHA256).Hash
 $premierePanel = cut-workbench bridge-hash "$cepExtensions/com.cutworkbench.premiere"
 ```
 
-启动 Premiere bridge：
+Start the Premiere bridge:
 
 ```powershell
 cut-workbench `
@@ -350,11 +350,11 @@ cut-workbench `
   mcp
 ```
 
-同步仍使用 `sync.open → sync.preview → sync.commit → sync.publish`。只有 preview 审核完成后才在面板中勾选发布授权。目标工程必须是不存在的新 `.prproj` 或 `.aep` 文件。详见 [adobe-local-bridge.md](adobe-local-bridge.md)。
+Synchronization still uses `sync.open → sync.preview → sync.commit → sync.publish`. Authorize publication in the panel only after preview review. The destination must be a new, nonexistent `.prproj` or `.aep`. See [adobe-local-bridge.md](adobe-local-bridge.md).
 
-## 11. 本地 SRT 配音
+## 11. Local SRT voiceover
 
-Workbench 不绑定具体 TTS 引擎。可把 GPT-SoVITS、CosyVoice 等包装为 `json-command` provider：
+Workbench is TTS-engine-neutral. Wrap GPT-SoVITS, CosyVoice, or another engine as a `json-command` provider:
 
 ```json
 {
@@ -366,17 +366,17 @@ Workbench 不绑定具体 TTS 引擎。可把 GPT-SoVITS、CosyVoice 等包装�
 }
 ```
 
-Routing 中显式加入：
+Add explicitly to routing:
 
 ```json
 "audio.synthesize.tts": {"standard": "local", "high": "local"}
 ```
 
-建议一条 SRT cue 对应一个独立 WAV 和 audio segment；字幕保留在 caption track，配音放在命名 dialogue track。保存原始 SRT、参考音频、自然时长 WAV、拟合 WAV、RTF/VRAM/时长误差等 evidence。整轨 WAV 只作为试听或导出便利。
+Use one WAV and audio segment per SRT cue. Keep subtitles on a caption track and voiceover on a named dialogue track. Retain original SRT, reference audio, natural-duration WAVs, fitted WAVs, and evidence such as RTF/VRAM/duration error. Full-track WAVs are only listening/export conveniences.
 
-## 12. 交接、分支与恢复
+## 12. Handoff, branching, and recovery
 
-`handed_off` revision 永久拒绝 mutation。继续修改时调用 `project.branch`：
+`handed_off` revisions permanently reject mutation. Call `project.branch` to continue:
 
 ```json
 {
@@ -387,42 +387,42 @@ Routing 中显式加入：
 }
 ```
 
-不要删除历史 revision、journal、原始媒体或外部编辑器基线。
+Preserve historical revisions, journals, original media, and external editor baselines.
 
-## 13. 常见问题
+## 13. Troubleshooting
 
 ### `RevisionConflict`
 
-其他调用者已经提交新 revision。重新 `project.inspect`，理解变化后重建计划。
+Another caller submitted a revision. Rerun `project.inspect`, understand changes, and rebuild the plan.
 
-### capability 一直是 `pending_agent`
+### Capability remains `pending_agent`
 
-当前 routing 选择了 Agent，或本地 provider 不可用。让 Agent 完成并调用 `capability.submit`，或检查 config 中的 capability 名称和 command。
+Routing selected the agent or a local provider is unavailable. Have the agent complete and `capability.submit`, or check capability names and commands in configuration.
 
-### 本地 provider 返回 invalid JSON
+### Local provider returns invalid JSON
 
-确保 stdout 只有一个结果 JSON，进度日志全部写 stderr。
+Ensure stdout contains only one result JSON and all progress logs go to stderr.
 
-### 剪映 publish 被拒绝
+### Jianying publication rejected
 
-确认剪映已关闭、codec 哈希与版本匹配、目标目录不存在，并重新 preview 更新 fingerprint。
+Confirm Jianying is closed, codec hash/version match, and destination does not exist. Preview again to refresh the fingerprint.
 
-### Adobe profile/hash 不匹配
+### Adobe profile/hash mismatch
 
-重新从面板写 snapshot，确认宿主版本，计算实际安装面板目录和 `profile.json` 的新哈希，再开启新会话。不要绕过 pin。
+Write a new panel snapshot, confirm the host version, calculate new installed-panel and `profile.json` hashes, then open a new session. Do not bypass pins.
 
-### VectCut compile 拒绝 opaque entity
+### VectCut compilation rejects opaque entities
 
-编译器无法证明该原生对象能无损重建。继续使用外部编辑器 round trip，或实现 typed importer/writer；不要删除 opaque ledger 强行通过。
+The compiler cannot prove lossless reconstruction of the native object. Continue external-editor round trips or implement typed importers/writers; do not delete the opaque ledger to force acceptance.
 
-## 14. 最终检查清单
+## 14. Final checklist
 
-- 所有 source 都有真实 SHA-256、时长和完整 2 fps 审计证据。
-- 当前 revision 与 Agent 使用的 `expected_revision` 一致。
-- 底轨、处理、字幕、效果、对话音频仍可独立选择。
-- capability job 已完成，或在交接中明确列为 pending。
-- downgrade 有原因、fallback 和人工批准。
-- 视觉证据与当前 content fingerprint 一致。
-- 外部编辑器 publish 指向新 clone，源工程未变化。
-- `project.verify` 通过，`project.manifest` 已保存。
-- handed-off 后的继续工作从 branch 开始。
+- Every source has real SHA-256, duration, and full 2 fps audit evidence.
+- Current revision matches the agent's `expected_revision`.
+- Base tracks, treatments, captions, effects, and dialogue remain separately selectable.
+- Capability jobs are complete or explicitly pending in the handoff.
+- Downgrades have reasons, fallbacks, and human approval.
+- Visual evidence matches the current content fingerprint.
+- External publication targets a new clone; the source remains unchanged.
+- `project.verify` passes and `project.manifest` is saved.
+- Further work after handoff starts from a branch.

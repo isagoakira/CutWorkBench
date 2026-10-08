@@ -1,28 +1,28 @@
-# Windows 本地剪映自动剪辑安装包
+# Windows local Jianying editing setup
 
-这套安装包把当前已验证的本地链路包装成普通用户可执行的脚本：**剪映专业版 + 本仓库 + 一次安装**。工程、素材和草稿始终保留在本机；不会调用云端 VectCut，也不需要 `VECTCUT_API_KEY`。
+This installer packages the verified local path into user-facing scripts: **Jianying Pro + this repository + one-time installation**. Projects, media, and drafts stay local; it does not call cloud VectCut or require `VECTCUT_API_KEY`.
 
-## 它会安装什么
+## Installed components
 
-| 组件 | 用途 | 是否由剪映自带 |
+| Component | Purpose | Included in Jianying? |
 | --- | --- | --- |
-| Cut Workbench | 可编辑剪辑工程、版本、轨道与验收 | 否 |
-| 本地 VectCutAPI | 将 Workbench 工程编译成新的剪映草稿 | 否 |
-| FFmpeg / ffprobe | 审阅版渲染、时长与音视频流检测 | 否 |
-| OpenCV / Pillow | 高频关键帧联系表与视觉验收 | 否，可跳过 |
-| 剪映专业版 | 打开和继续人工编辑生成的草稿 | 是，用户需先安装 |
+| Cut Workbench | Editable projects, versions, tracks, acceptance | No |
+| Local VectCutAPI | Compile Workbench projects into new Jianying drafts | No |
+| FFmpeg / ffprobe | Review rendering, duration and audio/video stream checks | No |
+| OpenCV / Pillow | Dense keyframe contact sheets and visual acceptance | No; optional |
+| Jianying Pro | Open generated drafts and continue manual editing | Yes; user installs it first |
 
-Agent 不需要内置 FFmpeg、视觉库或剪辑工具；只需支持 stdio MCP，并按下文导入生成的 MCP 配置。
+Agents need only stdio MCP support and the generated configuration below, not built-in FFmpeg, visual libraries, or editing tools.
 
-## 安装前
+## Before installation
 
-1. 安装剪映专业版，并至少打开一次、创建后关闭一个空草稿。
-2. 下载或克隆本仓库到本机并解压。若下载 ZIP，不需要预装 Git；安装脚本会在需要时通过 `winget` 安装 Git。
-3. 打开 PowerShell，进入仓库根目录。
+1. Install and open Jianying Pro at least once, create an empty draft, then close it.
+2. Download/extract or clone this repository locally. ZIP downloads need no preinstalled Git; the installer uses `winget` when Git is needed.
+3. Open PowerShell in the repository root.
 
-默认草稿目录是 `%LOCALAPPDATA%\JianyingPro\User Data\Projects\com.lveditor.draft`。如果你的剪映草稿目录自定义过，安装时必须显式传入，脚本不会猜测或扫描其他磁盘。
+The default draft directory is `%LOCALAPPDATA%\JianyingPro\User Data\Projects\com.lveditor.draft`. Supply custom directories explicitly; the script does not guess or scan other disks.
 
-## 一次安装
+## One-time installation
 
 ```powershell
 PowerShell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\install-local-editing.ps1 `
@@ -30,9 +30,9 @@ PowerShell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\install-lo
   -StartService
 ```
 
-`-InstallPrerequisites` 仅在缺少依赖时使用 `winget` 安装 Git、Python 3.11+ 和 FFmpeg。若已安装，可以省略。默认安装位置为 `%LOCALAPPDATA%\CutWorkbench`，不会覆盖已有剪映草稿或 VectCutAPI 配置；需要重写本机配置时才传 `-ForceConfig`。
+`-InstallPrerequisites` uses `winget` to install missing Git, Python 3.11+, and FFmpeg; omit it if they are installed. Default installation: `%LOCALAPPDATA%\CutWorkbench`. Existing Jianying drafts and VectCutAPI configuration are preserved; pass `-ForceConfig` only to rewrite local settings.
 
-草稿目录自定义时：
+For a custom draft directory:
 
 ```powershell
 PowerShell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\install-local-editing.ps1 `
@@ -41,58 +41,58 @@ PowerShell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\install-lo
   -StartService
 ```
 
-安装完成后会生成：
+Installation generates:
 
-- `%LOCALAPPDATA%\CutWorkbench\runtime\runtime-config.json`：本机 Workbench/VectCut/草稿目录配置；
-- `%LOCALAPPDATA%\CutWorkbench\agent-mcp-config.json`：可复制到 Codex、Claude Desktop 或其他 MCP Agent 的服务配置；
-- `%LOCALAPPDATA%\CutWorkbench\installation.json`：安装回执；
-- `%LOCALAPPDATA%\CutWorkbench\service\`：本地 VectCutAPI 的受管日志与服务状态。
+- `%LOCALAPPDATA%\CutWorkbench\runtime\runtime-config.json`: Local Workbench/VectCut/draft-directory configuration;
+- `%LOCALAPPDATA%\CutWorkbench\agent-mcp-config.json`: Service configuration to copy into Codex, Claude Desktop, or another MCP agent;
+- `%LOCALAPPDATA%\CutWorkbench\installation.json`: Installation receipt;
+- `%LOCALAPPDATA%\CutWorkbench\service\`: Managed local VectCutAPI logs and service state.
 
-## 日常启动、停止与自检
+## Daily startup, shutdown, and diagnostics
 
-每次重启电脑后，先启动本机自动建稿服务：
+After each reboot, start the local automatic draft service:
 
 ```powershell
 .\scripts\windows\start-local-editing.ps1
 ```
 
-检查所有关键依赖、草稿目录权限、本地服务和视觉验收包：
+Check critical dependencies, draft permissions, local service, and visual acceptance tools:
 
 ```powershell
 .\scripts\windows\doctor-local-editing.ps1
 ```
 
-对一个素材执行只读音视频流检查（不会转写、不会创建草稿）：
+Perform read-only audio/video stream inspection without transcription or draft creation:
 
 ```powershell
 .\scripts\windows\doctor-local-editing.ps1 -MediaPath 'D:\videos\demo.mp4'
 ```
 
-停止脚本只会终止由 `start-local-editing.ps1` 记录的那个本地 VectCutAPI 进程：
+The stop script terminates only the local VectCutAPI process recorded by `start-local-editing.ps1`:
 
 ```powershell
 .\scripts\windows\stop-local-editing.ps1
 ```
 
-## 首次真实草稿验收
+## First real-draft acceptance
 
-在剪映中首次使用前，对任意至少 6 秒的本地视频运行一次冒烟测试。该命令会创建一个新的短草稿，不会修改原素材或现有草稿：
+Before first Jianying use, run a smoke test on a local video at least 6 seconds long. It creates a new short draft without changing original media or existing drafts:
 
 ```powershell
 .\scripts\windows\smoke-local-editing.ps1 -Source 'D:\videos\six-seconds-or-longer.mp4'
 ```
 
-脚本会验证两段真实裁切、时间线连续性、源素材 SHA-256、调用本机 VectCutAPI 和草稿文件落盘。随后需人工在剪映专业版草稿库确认该草稿可见且可播放；“文件已生成”不等于“当前剪映版本可正常打开”。
+The script verifies two real cuts, timeline continuity, source SHA-256, local VectCutAPI calls, and persisted draft files. Then manually verify visibility/playback in the Jianying Pro draft library; file generation does not establish compatibility with the installed version.
 
-## Agent 接入
+## Agent integration
 
-将安装生成的 `agent-mcp-config.json` 中的 `cut-workbench` 条目导入你的 Agent 配置。它启动的只是本地 stdio MCP：工程修改写入 Workbench revision，`vectcut.execute` 才会通过 `127.0.0.1:9001` 新建一个可编辑剪映草稿。
+Import the `cut-workbench` entry from generated `agent-mcp-config.json` into your agent. It starts local stdio MCP. Project edits create Workbench revisions; `vectcut.execute` creates new editable Jianying drafts through `127.0.0.1:9001`.
 
-本安装包不会直接修改 `draft_content.json`，不会覆盖原草稿，也不会切换到云端 VectCut。
+The installer does not directly modify `draft_content.json`, overwrite original drafts, or switch to cloud VectCut.
 
-## 已知兼容边界
+## Known compatibility boundaries
 
-- 自动建稿固定使用实测的 VectCutAPI 提交 `d14e70749c9331424ab816a402bb45417c50cf68` 和 `jianying_pro_10` 草稿模板。
-- 因剪映版本和草稿格式可能变化，首次安装必须运行上面的真实草稿验收。
-- macOS/Linux 请使用 [macOS / Linux 本地剪映自动剪辑安装包](posix-local-editing-setup.md)；其中 WSL 只验证 Linux 服务与草稿文件，不能替代 macOS/Windows 剪映 GUI 验收。
-- 不包含 ASR、TTS、云渲染或 AI 特效；它们是独立的可选能力，不是本地静音屏录剪辑的前置条件。
+- Automatic draft creation uses tested VectCutAPI commit `d14e70749c9331424ab816a402bb45417c50cf68` and the `jianying_pro_10` draft template.
+- Jianying versions and draft formats can change; run the real-draft acceptance check after first installation.
+- For macOS/Linux, use [macOS / Linux local Jianying editing setup](posix-local-editing-setup.md). WSL verifies Linux services/draft files only, not macOS/Windows Jianying GUI acceptance.
+- ASR, TTS, cloud rendering, and AI effects are separate optional capabilities, not prerequisites for local silent screen-recording edits.

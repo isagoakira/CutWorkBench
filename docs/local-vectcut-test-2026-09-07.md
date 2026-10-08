@@ -1,35 +1,35 @@
-# 本地 VectCut 实测记录（2026-09-07）
+# Local VectCut test record (2026-09-07)
 
-上游：sun-guannan/VectCutAPI，提交 d14e70749c9331424ab816a402bb45417c50cf68。
+Upstream: sun-guannan/VectCutAPI, commit d14e70749c9331424ab816a402bb45417c50cf68.
 
-## 测试结果
+## Results
 
-- Windows 本地服务：127.0.0.1:9001，Python 3.13，真实 HTTP 调用创建和保存草稿成功。
-- WSL Ubuntu 22.04：Python 3.11.15，独立服务 127.0.0.1:9002，真实 HTTP 调用成功。
-- 两端完整单元测试均为 92 项通过。
-- 两端真实素材冒烟测试：同一素材截取 1–3 秒及 4–6 秒，排列在时间线 0–2 秒及 2–4 秒；实体数量、时间线、源入点、素材存在性和源/复制素材 SHA-256 均通过。
-- macOS 提供启动脚本、默认路径和部署说明；没有 Mac 真机测试。WSL 不等同于 macOS 剪映验收。
+- Windows local service: 127.0.0.1:9001, Python 3.13; real HTTP draft creation/save succeeded.
+- WSL Ubuntu 22.04: Python 3.11.15, independent service at 127.0.0.1:9002; real HTTP calls succeeded.
+- All 92 unit tests passed on each platform.
+- Real-media smoke tests on both: source ranges 1–3 and 4–6 seconds placed at timeline 0–2 and 2–4 seconds. Entity counts, timeline positions, source in-points, media existence, and source/copied-media SHA-256 passed.
+- macOS has startup scripts, default paths, and deployment instructions, but no real Mac testing. WSL does not establish macOS Jianying acceptance.
 
-## 五段实际素材
+## Five real-media segments
 
-Workbench 项目 taiyi-local-a020d4a0，revision 2。
+Workbench project taiyi-local-a020d4a0, revision 2.
 
-生成草稿：`E:/JianYing/JianyingPro Drafts/dfd_cat_1788742445_c6e10a81`。
+Generated draft: `E:/JianYing/JianyingPro Drafts/dfd_cat_1788742445_c6e10a81`.
 
-顺序：MCP/Skill → WorkBuddy 上传 → 网页查看 → Claude Code 召回 → 同步结果替换素材。
+Order: MCP/Skill → WorkBuddy upload → web viewing → Claude Code recall → replace media with synchronization results.
 
-画布 2560×1600，30 fps，总时长 680.2 秒。按视频流精确时长向下对齐帧边界；相较原取整计划 680.28 秒减少 0.08 秒，保留原工程另建分支。五个素材哈希一致，接缝取整误差不超过 1 微秒，工程校验通过。
+Canvas: 2560×1600, 30 fps, duration 680.2 seconds. Exact video-stream durations were rounded down to frame boundaries, shortening the original rounded 680.28-second plan by 0.08 seconds. The original project was preserved and a branch created. All five media hashes matched, join rounding errors stayed within 1 microsecond, and project verification passed.
 
-回执：运行目录 `vectcut-executions/2ca138dbebaa49caa413abce08a3796c.json`。
+Receipt: runtime `vectcut-executions/2ca138dbebaa49caa413abce08a3796c.json`.
 
-## 已修正的问题
+## Fixed issues
 
-- 上游默认 CapCut/9000；需显式配置国内剪映模板及 9001。
-- 健康检查原先将任意 HTTP 错误视为成功；改为检查具体只读接口的结果结构。
-- 保存接口的 success 不能证明落盘成功；增加保存任务状态、实体和素材文件校验。
-- 原计划毫秒取整会超出视频流时长，导致上游裁短片段；实际素材分支对齐到 30 fps。
-- CLI 自动加载运行目录 runtime-config.json，配置本机实际草稿目录。
+- Upstream defaults to CapCut/9000; explicitly configure the domestic Jianying template and port 9001.
+- Health checks previously accepted arbitrary HTTP errors; now validate the result structure of a specific read-only endpoint.
+- Save API success does not establish persistence; add save-task status, entity, and media-file checks.
+- Millisecond rounding exceeded video-stream duration, causing upstream truncation; the real-media branch aligns to 30 fps.
+- CLI autoloads runtime-config.json from the runtime directory to configure the actual local draft directory.
 
-## 尚未验证
+## Unverified
 
-上游使用 jianying_pro_10 模板生成明文草稿；本记录没有证明剪映 11.3 能在界面中打开并播放，也没有证明草稿索引已刷新。文件生成成功不等于编辑器最终验收通过。
+Upstream generates plaintext drafts with the jianying_pro_10 template. This record does not prove opening/playback in Jianying 11.3 or a refreshed draft index. File generation is distinct from final editor acceptance.
